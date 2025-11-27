@@ -11,7 +11,11 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
-  firebase_core: ^4.2.1
+  firebase_core: ^2.24.0
+  firebase_auth: ^4.17.3
+  firebase_database: ^10.3.4
+  intl: ^0.18.1
+  fl_chart: ^0.66.2
 
 dev_dependencies:
   flutter_test:
@@ -20,3 +24,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - images/walpapers.jpeg
+    - images/
