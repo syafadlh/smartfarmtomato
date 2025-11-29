@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart'; 
+import '../../../providers/theme_provider.dart'; 
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -195,12 +197,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
     return Icons.sensors; // Icon default untuk semua data sensor
   }
 
-  Color _getLogColor(String type) {
-    return Colors.green; // Warna hijau untuk data sensor
+  Color _getLogColor(String type, BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
+    return themeProvider.isDarkMode ? Colors.green.shade300 : Colors.green;
   }
 
-  Color _getLogBackgroundColor(String type) {
-    return Colors.green.shade50;
+  Color _getLogBackgroundColor(String type, BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
+    return themeProvider.isDarkMode ? Colors.grey.shade800 : Colors.green.shade50;
   }
 
   void _refreshData() {
@@ -213,6 +217,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
     final filteredLogs = _selectedFilter == 'semua' ? _logs : _getFilteredLogs();
 
     return Scaffold(
@@ -224,7 +229,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
             fontSize: 20,
           ),
         ),
-        backgroundColor: Colors.green,
+        backgroundColor: themeProvider.isDarkMode ? Colors.green.shade800 : Colors.green,
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
@@ -235,7 +240,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
           ),
         ],
       ),
-      backgroundColor: Colors.grey.shade50,
+      backgroundColor: themeProvider.isDarkMode ? Colors.grey.shade900 : Colors.grey.shade50,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -246,15 +251,21 @@ class _HistoryScreenState extends State<HistoryScreen> {
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFFE8F5E8), Color(0xFFC8E6C9)],
-                  ),
+                  gradient: themeProvider.isDarkMode 
+                    ? const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF1B5E20), Color(0xFF2E7D32)],
+                      )
+                    : const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFFE8F5E8), Color(0xFFC8E6C9)],
+                      ),
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.green.withOpacity(0.2),
+                      color: (themeProvider.isDarkMode ? Colors.green.shade800 : Colors.green).withOpacity(0.2),
                       blurRadius: 8,
                       offset: const Offset(0, 4),
                     ),
@@ -265,7 +276,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.green,
+                        color: themeProvider.isDarkMode ? Colors.green.shade800 : Colors.green,
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(Icons.analytics, color: Colors.white, size: 24),
@@ -275,12 +286,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
+                          Text(
                             'Data History SmartFarm',
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
-                              color: Colors.green,
+                              color: themeProvider.isDarkMode ? Colors.white : Colors.green,
                             ),
                           ),
                           const SizedBox(height: 4),
@@ -288,7 +299,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                             '${filteredLogs.length} data monitoring ditemukan',
                             style: TextStyle(
                               fontSize: 14,
-                              color: Colors.green.shade700,
+                              color: themeProvider.isDarkMode ? Colors.green.shade200 : Colors.green.shade700,
                             ),
                           ),
                         ],
@@ -300,18 +311,18 @@ class _HistoryScreenState extends State<HistoryScreen> {
               const SizedBox(height: 20),
 
               // Time Filter dengan lebih banyak pilihan
-              _buildTimeFilter(),
+              _buildTimeFilter(context),
               const SizedBox(height: 20),
 
               // Content
               Expanded(
                 child: _isLoading
-                    ? _buildLoadingState()
+                    ? _buildLoadingState(context)
                     : _hasError
-                        ? _buildErrorState()
+                        ? _buildErrorState(context)
                         : filteredLogs.isEmpty
-                            ? _buildEmptyState()
-                            : _buildLogList(filteredLogs),
+                            ? _buildEmptyState(context)
+                            : _buildLogList(filteredLogs, context),
               ),
             ],
           ),
@@ -320,18 +331,18 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  Widget _buildTimeFilter() {
-    // PERBAIKAN: Tambahkan lebih banyak pilihan filter waktu
+  Widget _buildTimeFilter(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
     final filters = ['1jam', '6jam', '24jam', '2hari', '3hari', '7hari', '1bulan', 'semua'];
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: themeProvider.isDarkMode ? Colors.grey.shade800 : Colors.white,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withOpacity(themeProvider.isDarkMode ? 0.3 : 0.1),
             blurRadius: 6,
             offset: const Offset(0, 3),
           ),
@@ -340,15 +351,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(Icons.filter_alt, color: Colors.green, size: 18),
-              SizedBox(width: 8),
+              Icon(Icons.filter_alt, color: themeProvider.isDarkMode ? Colors.green.shade300 : Colors.green, size: 18),
+              const SizedBox(width: 8),
               Text(
                 'Filter Waktu',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
+                  color: themeProvider.isDarkMode ? Colors.white : Colors.black,
                 ),
               ),
             ],
@@ -369,10 +381,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       _selectedFilter = filter;
                     });
                   },
-                  backgroundColor: Colors.grey.shade100,
-                  selectedColor: Colors.green,
+                  backgroundColor: themeProvider.isDarkMode ? Colors.grey.shade700 : Colors.grey.shade100,
+                  selectedColor: themeProvider.isDarkMode ? Colors.green.shade800 : Colors.green,
                   labelStyle: TextStyle(
-                    color: isActive ? Colors.white : Colors.black87,
+                    color: isActive ? Colors.white : (themeProvider.isDarkMode ? Colors.white : Colors.black87),
                     fontWeight: FontWeight.w500,
                   ),
                   checkmarkColor: Colors.white,
@@ -385,32 +397,36 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  Widget _buildLogList(List<LogEntry> logs) {
+  Widget _buildLogList(List<LogEntry> logs, BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    
     return Column(
       children: [
         // Summary Cards
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Colors.blue.shade50,
+            color: themeProvider.isDarkMode ? Colors.blue.shade900.withOpacity(0.3) : Colors.blue.shade50,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.blue.shade100),
+            border: Border.all(color: themeProvider.isDarkMode ? Colors.blue.shade700 : Colors.blue.shade100),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildSummaryItem('Total', logs.length.toString(), Icons.list, Colors.blue),
+              _buildSummaryItem('Total', logs.length.toString(), Icons.list, Colors.blue, context),
               _buildSummaryItem(
                 'Tanah Kering', 
                 logs.where((log) => log.soilCategory == 'SANGAT KERING' || log.soilCategory == 'KERING').length.toString(), 
                 Icons.grass, 
-                Colors.orange
+                Colors.orange,
+                context
               ),
               _buildSummaryItem(
                 'Pompa ON', 
                 logs.where((log) => log.pumpStatus == 'ON').length.toString(), 
                 Icons.water_drop, 
-                Colors.blue
+                Colors.blue,
+                context
               ),
             ],
           ),
@@ -424,7 +440,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
             separatorBuilder: (context, index) => const SizedBox(height: 8),
             itemBuilder: (context, index) {
               final log = logs[index];
-              return _buildLogItem(log);
+              return _buildLogItem(log, context);
             },
           ),
         ),
@@ -432,17 +448,19 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  Widget _buildSummaryItem(String title, String value, IconData icon, Color color) {
+  Widget _buildSummaryItem(String title, String value, IconData icon, Color color, BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    
     return Column(
       children: [
         Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: themeProvider.isDarkMode ? Colors.grey.shade800 : Colors.white,
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.1),
+                color: Colors.black.withOpacity(themeProvider.isDarkMode ? 0.3 : 0.1),
                 blurRadius: 4,
                 offset: const Offset(0, 2),
               ),
@@ -461,16 +479,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
         ),
         Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 10,
-            color: Colors.grey,
+            color: themeProvider.isDarkMode ? Colors.grey.shade400 : Colors.grey,
           ),
         ),
       ],
     );
   }
 
-  Widget _buildLogItem(LogEntry log) {
+  Widget _buildLogItem(LogEntry log, BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
     final date = DateTime.fromMillisecondsSinceEpoch(log.timestamp);
     final timeFormat = DateFormat('HH:mm');
     final dateFormat = DateFormat('dd/MM/yyyy');
@@ -479,17 +498,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: _getLogBackgroundColor(log.type),
+        color: _getLogBackgroundColor(log.type, context),
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withOpacity(themeProvider.isDarkMode ? 0.2 : 0.05),
             blurRadius: 6,
             offset: const Offset(0, 2),
           ),
         ],
         border: Border.all(
-          color: _getLogColor(log.type).withOpacity(0.3),
+          color: _getLogColor(log.type, context).withOpacity(0.3),
           width: 1,
         ),
       ),
@@ -499,12 +518,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: _getLogColor(log.type).withOpacity(0.2),
+              color: _getLogColor(log.type, context).withOpacity(0.2),
               shape: BoxShape.circle,
             ),
             child: Icon(
               _getLogIcon(log.type, log.action),
-              color: _getLogColor(log.type),
+              color: _getLogColor(log.type, context),
               size: 20,
             ),
           ),
@@ -517,10 +536,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
               children: [
                 Text(
                   log.action,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
                     height: 1.3,
+                    color: themeProvider.isDarkMode ? Colors.white : Colors.black,
                   ),
                 ),
                 
@@ -531,7 +551,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     _buildDetailedSensorDataText(log),
                     style: TextStyle(
                       fontSize: 12,
-                      color: Colors.grey.shade700,
+                      color: themeProvider.isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -543,7 +563,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 Wrap(
                   spacing: 6,
                   runSpacing: 4,
-                  children: _buildStatusChips(log),
+                  children: _buildStatusChips(log, context),
                 ),
               ],
             ),
@@ -555,10 +575,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
             children: [
               Text(
                 timeFormat.format(date),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
-                  color: Colors.black87,
+                  color: themeProvider.isDarkMode ? Colors.white : Colors.black87,
                 ),
               ),
               const SizedBox(height: 2),
@@ -566,7 +586,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 isToday ? 'Hari Ini' : dateFormat.format(date),
                 style: TextStyle(
                   fontSize: 11,
-                  color: Colors.grey.shade600,
+                  color: themeProvider.isDarkMode ? Colors.grey.shade400 : Colors.grey.shade600,
                 ),
               ),
             ],
@@ -576,7 +596,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  List<Widget> _buildStatusChips(LogEntry log) {
+  List<Widget> _buildStatusChips(LogEntry log, BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
     final chips = <Widget>[];
     
     if (log.soilCategory != null) {
@@ -584,7 +605,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           decoration: BoxDecoration(
-            color: _getSoilColor(log.soilCategory!).withOpacity(0.1),
+            color: _getSoilColor(log.soilCategory!).withOpacity(themeProvider.isDarkMode ? 0.3 : 0.1),
             borderRadius: BorderRadius.circular(6),
           ),
           child: Text(
@@ -603,14 +624,18 @@ class _HistoryScreenState extends State<HistoryScreen> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           decoration: BoxDecoration(
-            color: log.pumpStatus == 'ON' ? Colors.green.shade50 : Colors.grey.shade50,
+            color: log.pumpStatus == 'ON' 
+              ? Colors.green.withOpacity(themeProvider.isDarkMode ? 0.3 : 0.1)
+              : Colors.grey.withOpacity(themeProvider.isDarkMode ? 0.3 : 0.1),
             borderRadius: BorderRadius.circular(6),
           ),
           child: Text(
             'Pompa: ${log.pumpStatus}',
             style: TextStyle(
               fontSize: 10,
-              color: log.pumpStatus == 'ON' ? Colors.green.shade700 : Colors.grey.shade700,
+              color: log.pumpStatus == 'ON' 
+                ? Colors.green.shade300 
+                : (themeProvider.isDarkMode ? Colors.grey.shade300 : Colors.grey.shade700),
             ),
           ),
         ),
@@ -622,14 +647,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           decoration: BoxDecoration(
-            color: Colors.purple.shade50,
+            color: Colors.purple.withOpacity(themeProvider.isDarkMode ? 0.3 : 0.1),
             borderRadius: BorderRadius.circular(6),
           ),
           child: Text(
             log.plantStage!,
             style: TextStyle(
               fontSize: 10,
-              color: Colors.purple.shade700,
+              color: themeProvider.isDarkMode ? Colors.purple.shade300 : Colors.purple.shade700,
             ),
           ),
         ),
@@ -665,7 +690,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
     return parts.isNotEmpty ? parts.join(' • ') : 'Data sensor';
   }
 
-  Widget _buildLoadingState() {
+  Widget _buildLoadingState(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -673,7 +700,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.green.shade50,
+              color: themeProvider.isDarkMode ? Colors.green.shade900.withOpacity(0.3) : Colors.green.shade50,
               shape: BoxShape.circle,
             ),
             child: const CircularProgressIndicator(
@@ -682,11 +709,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'Memuat data monitoring...',
             style: TextStyle(
               fontSize: 16,
-              color: Colors.green,
+              color: themeProvider.isDarkMode ? Colors.green.shade300 : Colors.green,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -695,7 +722,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  Widget _buildErrorState() {
+  Widget _buildErrorState(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -703,21 +732,21 @@ class _HistoryScreenState extends State<HistoryScreen> {
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: Colors.red.shade50,
+              color: themeProvider.isDarkMode ? Colors.red.shade900.withOpacity(0.3) : Colors.red.shade50,
               shape: BoxShape.circle,
             ),
-            child: const Icon(
+            child: Icon(
               Icons.error_outline,
               size: 50,
-              color: Colors.red,
+              color: themeProvider.isDarkMode ? Colors.red.shade300 : Colors.red,
             ),
           ),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'Gagal memuat data',
             style: TextStyle(
               fontSize: 16,
-              color: Colors.red,
+              color: themeProvider.isDarkMode ? Colors.red.shade300 : Colors.red,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -727,7 +756,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
             icon: const Icon(Icons.refresh),
             label: const Text('Coba Lagi'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
+              backgroundColor: themeProvider.isDarkMode ? Colors.red.shade800 : Colors.red,
               foregroundColor: Colors.white,
             ),
           ),
@@ -736,7 +765,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -744,21 +775,21 @@ class _HistoryScreenState extends State<HistoryScreen> {
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: Colors.grey.shade100,
+              color: themeProvider.isDarkMode ? Colors.grey.shade800 : Colors.grey.shade100,
               shape: BoxShape.circle,
             ),
-            child: const Icon(
+            child: Icon(
               Icons.data_array,
               size: 50,
-              color: Colors.grey,
+              color: themeProvider.isDarkMode ? Colors.grey.shade400 : Colors.grey,
             ),
           ),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'Belum ada data monitoring',
             style: TextStyle(
               fontSize: 16,
-              color: Colors.grey,
+              color: themeProvider.isDarkMode ? Colors.grey.shade400 : Colors.grey,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -768,7 +799,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
             icon: const Icon(Icons.refresh),
             label: const Text('Refresh'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
+              backgroundColor: themeProvider.isDarkMode ? Colors.green.shade800 : Colors.green,
               foregroundColor: Colors.white,
             ),
           ),
