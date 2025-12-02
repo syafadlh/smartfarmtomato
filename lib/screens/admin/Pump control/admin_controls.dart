@@ -1,437 +1,537 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:intl/intl.dart';
 
-class AdminNotificationsScreen extends StatefulWidget {
-  const AdminNotificationsScreen({super.key});
+class AdminControlsScreen extends StatefulWidget {
+  const AdminControlsScreen({Key? key}) : super(key: key);
 
   @override
-  State<AdminNotificationsScreen> createState() => _AdminNotificationsScreenState();
+  State<AdminControlsScreen> createState() => _AdminControlsScreenState();
 }
 
-class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
+class _AdminControlsScreenState extends State<AdminControlsScreen> {
+  // Firebase Database Reference
   final DatabaseReference _databaseRef = FirebaseDatabase.instance.ref();
   
-  List<Map<String, dynamic>> _notifications = [];
-  bool _isLoading = true;
-  String _filter = 'all'; // all, unread, read
+  // State variables
+  bool isAutoMode = true;
+  bool isPumpActive = false;
+  bool isLampActive = false;
+  
+  // System status
+  Map<String, String> systemStatus = {
+    'iot': 'aktif',
+    'database': 'sitrep',
+    'sensor': 'aktif',
+    'actuator': 'auto',
+  };
 
   @override
   void initState() {
     super.initState();
-    _loadNotifications();
+    _loadControlStatus();
   }
 
-  void _loadNotifications() {
-    _databaseRef.child('notifications')
-      .orderByChild('timestamp')
-      .onValue.listen((event) {
-      try {
-        final data = event.snapshot.value;
-        final List<Map<String, dynamic>> notifications = [];
-        
-        if (data != null && data is Map) {
-          data.forEach((key, value) {
-            if (value is Map) {
-              notifications.add({
-                'id': key,
-                'title': value['title'] ?? 'Notifikasi',
-                'message': value['message'] ?? 'No message',
-                'type': value['type'] ?? 'general',
-                'severity': value['severity'] ?? 'medium',
-                'timestamp': value['timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
-                'read': value['read'] ?? false,
-                'nodeId': value['nodeId'],
-                'farmerId': value['farmerId'],
-              });
-            }
-          });
-          
-          setState(() {
-            _notifications = notifications.reversed.toList();
-            _isLoading = false;
-          });
-        }
-      } catch (e) {
-        print('Error loading notifications: $e');
+  // Load control status from Firebase
+  void _loadControlStatus() {
+    _databaseRef.child('control').onValue.listen((event) {
+      final data = event.snapshot.value as Map<dynamic, dynamic>?;
+      if (data != null && mounted) {
         setState(() {
-          _isLoading = false;
+          isPumpActive = data['pump'] == true;
+          isLampActive = data['light'] == true;
+          isAutoMode = data['autoMode'] == true;
+          systemStatus['actuator'] = isAutoMode ? 'auto' : 'manual';
         });
       }
     });
   }
 
-  void _markAsRead(String notificationId) {
-    _databaseRef.child('notifications/$notificationId/read').set(true);
-  }
-
-  void _markAllAsRead() {
-    for (var notification in _notifications.where((n) => !n['read'])) {
-      _markAsRead(notification['id']);
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Semua notifikasi ditandai sudah dibaca')),
-    );
-  }
-
-  void _deleteNotification(String notificationId) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Hapus Notifikasi'),
-        content: const Text('Apakah Anda yakin ingin menghapus notifikasi ini?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Batal'),
-          ),
-          TextButton(
-            onPressed: () async {
-              await _databaseRef.child('notifications/$notificationId').remove();
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Notifikasi berhasil dihapus')),
-              );
-            },
-            child: const Text('Hapus', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _clearAll() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Hapus Semua'),
-        content: const Text('Apakah Anda yakin ingin menghapus semua notifikasi?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Batal'),
-          ),
-          TextButton(
-            onPressed: () async {
-              await _databaseRef.child('notifications').remove();
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Semua notifikasi berhasil dihapus')),
-              );
-            },
-            child: const Text('Hapus Semua', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  List<Map<String, dynamic>> get _filteredNotifications {
-    switch (_filter) {
-      case 'unread':
-        return _notifications.where((n) => !n['read']).toList();
-      case 'read':
-        return _notifications.where((n) => n['read']).toList();
-      default:
-        return _notifications;
-    }
-  }
-
-  Color _getSeverityColor(String severity) {
-    switch (severity) {
-      case 'high': return Colors.red;
-      case 'medium': return Colors.orange;
-      case 'low': return Colors.blue;
-      default: return Colors.grey;
-    }
-  }
-
-  IconData _getTypeIcon(String type) {
-    switch (type) {
-      case 'alarm': return Icons.alarm;
-      case 'warning': return Icons.warning;
-      case 'info': return Icons.info;
-      case 'success': return Icons.check_circle;
-      case 'error': return Icons.error;
-      default: return Icons.notifications;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final unreadCount = _notifications.where((n) => !n['read']).length;
-
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.background,
-      body: Column(
-        children: [
-          // Header
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Theme.of(context).cardColor,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+      backgroundColor: Colors.grey[100],
+      // appBar: AppBar(
+      //   backgroundColor: Colors.white,
+      //   elevation: 0,
+      //   leading: IconButton(
+      //     icon: const Icon(Icons.arrow_back, color: Colors.black),
+      //     onPressed: () => Navigator.pop(context),
+      //   ),
+      //   // title: const Text(
+      //   //   'Kontrol Akuator',
+      //   //   style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+      //   // ),
+      // ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Kontrol manual pompa air dan lampu tubuh',
+              style: TextStyle(color: Colors.grey, fontSize: 14),
             ),
+            const SizedBox(height: 20),
+            
+            // Mode Otomatis Card
+            _buildAutoModeCard(),
+            const SizedBox(height: 16),
+            
+            // Kontrol Pompa Air Card
+            _buildPumpControlCard(),
+            const SizedBox(height: 16),
+            
+            // Kontrol Lampu Tubuh Card
+            _buildLampControlCard(),
+            const SizedBox(height: 16),
+            
+            // Status Sistem Card
+            _buildSystemStatusCard(),
+            const SizedBox(height: 16),
+            
+            // Informasi Kontrol Card
+            _buildInfoCard(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAutoModeCard() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color.fromARGB(255, 32, 56, 43),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.settings_suggest, color: Color(0xFF2D5F5D)),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    const Text(
-                      'Notifikasi',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    if (unreadCount > 0) ...[
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.red,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          '$unreadCount',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                    ],
-                    const Spacer(),
-                    PopupMenuButton(
-                      itemBuilder: (context) => [
-                        const PopupMenuItem(
-                          value: 'mark_all_read',
-                          child: Row(
-                            children: [
-                              Icon(Icons.done_all, size: 20),
-                              SizedBox(width: 8),
-                              Text('Tandai Semua Dibaca'),
-                            ],
-                          ),
-                        ),
-                        const PopupMenuItem(
-                          value: 'clear_all',
-                          child: Row(
-                            children: [
-                              Icon(Icons.delete_sweep, size: 20, color: Colors.red),
-                              SizedBox(width: 8),
-                              Text('Hapus Semua', style: TextStyle(color: Colors.red)),
-                            ],
-                          ),
-                        ),
-                      ],
-                      onSelected: (value) {
-                        if (value == 'mark_all_read') {
-                          _markAllAsRead();
-                        } else if (value == 'clear_all') {
-                          _clearAll();
-                        }
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                // Filter Tabs
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _buildFilterChip('Semua', 'all'),
-                      _buildFilterChip('Belum Dibaca', 'unread'),
-                      _buildFilterChip('Sudah Dibaca', 'read'),
-                    ],
+                Text(
+                  isAutoMode ? 'Mode Otomatis' : 'Mode Manual',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
                   ),
+                ),
+                const SizedBox(height: 4),  
+                Text(
+                  isAutoMode
+                      ? 'Sistem mengontrol secara otomatis\nberdasarkan kondisi sensor'
+                      : 'Kontrol manual diaktifkan\nAnda dapat mengatur pompa & lampu',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
                 ),
               ],
             ),
           ),
-
-          // Notifications List
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _filteredNotifications.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.notifications_none,
-                              size: 64,
-                              color: Colors.grey[400],
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Tidak ada notifikasi',
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: _filteredNotifications.length,
-                        itemBuilder: (context, index) {
-                          final notification = _filteredNotifications[index];
-                          return _buildNotificationCard(notification);
-                        },
-                      ),
+          Switch(
+            value: isAutoMode,
+            onChanged: (value) {
+              _toggleAutoMode();
+            },
+            activeColor: Colors.green,
+            activeTrackColor: Colors.green[200],
           ),
         ],
       ),
     );
   }
 
-  Widget _buildFilterChip(String label, String value) {
-    final isSelected = _filter == value;
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: FilterChip(
-        label: Text(label),
-        selected: isSelected,
-        onSelected: (selected) {
-          setState(() {
-            _filter = value;
-          });
-        },
-        selectedColor: Colors.blue,
-        labelStyle: TextStyle(
-          color: isSelected ? Colors.white : null,
-          fontWeight: isSelected ? FontWeight.bold : null,
-        ),
+  Widget _buildPumpControlCard() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF01565B),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.water_drop, color: Colors.white, size: 28),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Kontrol Pompa Air',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: Icon(
+                  isPumpActive ? Icons.power_settings_new : Icons.power_off,
+                  color: Colors.white,
+                  size: 32,
+                ),
+                onPressed: isAutoMode ? null : _togglePump,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            isPumpActive ? 'Pompa dalam kondisi aktif' : 'Pompa dalam kondisi non-aktif',
+            style: const TextStyle(color: Colors.white70, fontSize: 14),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: isPumpActive ? Colors.green : Colors.grey[700],
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              isPumpActive ? 'AKTIF' : 'MATI',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.info_outline, color: Colors.white70, size: 16),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  isAutoMode
+                      ? 'Mode otomatis aktif - Kontrol manual dinonaktifkan'
+                      : 'Mode manual - Anda dapat mengontrol pompa',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildNotificationCard(Map<String, dynamic> notification) {
-    final isUnread = !notification['read'];
-    final date = DateTime.fromMillisecondsSinceEpoch(notification['timestamp']);
-    final timeFormat = DateFormat('dd MMM yyyy, HH:mm');
-
-    return Dismissible(
-      key: Key(notification['id']),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
-        color: Colors.red,
-        child: const Icon(Icons.delete, color: Colors.white),
+  Widget _buildLampControlCard() {
+    return Container(
+      decoration: BoxDecoration(
+       color: const Color(0xFFB5810D),
+        borderRadius: BorderRadius.circular(16),
       ),
-      onDismissed: (direction) {
-        _deleteNotification(notification['id']);
-      },
-      child: GestureDetector(
-        onTap: () {
-          if (isUnread) {
-            _markAsRead(notification['id']);
-          }
-        },
-        child: Card(
-          margin: const EdgeInsets.only(bottom: 12),
-          color: isUnread 
-              ? _getSeverityColor(notification['severity']).withOpacity(0.05)
-              : null,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: _getSeverityColor(notification['severity']).withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    _getTypeIcon(notification['type']),
-                    color: _getSeverityColor(notification['severity']),
-                    size: 20,
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.lightbulb, color: Colors.white, size: 28),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Kontrol Lampu Tubuh',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              notification['title'],
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: isUnread ? FontWeight.bold : FontWeight.normal,
-                              ),
-                            ),
-                          ),
-                          if (isUnread)
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: const BoxDecoration(
-                                color: Colors.blue,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        notification['message'],
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey[700],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
-                          const SizedBox(width: 4),
-                          Text(
-                            timeFormat.format(date),
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                          if (notification['nodeId'] != null) ...[
-                            const SizedBox(width: 12),
-                            Icon(Icons.sensors, size: 14, color: Colors.grey[600]),
-                            const SizedBox(width: 4),
-                            Text(
-                              'Node: ${notification['nodeId']}',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ],
-                  ),
+              ),
+              IconButton(
+                icon: Icon(
+                  isLampActive ? Icons.lightbulb : Icons.lightbulb_outline,
+                  color: Colors.white,
+                  size: 32,
                 ),
-              ],
+                onPressed: isAutoMode ? null : _toggleLamp,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            isLampActive ? 'Lampu dalam kondisi aktif' : 'Lampu dalam kondisi non-aktif',
+            style: const TextStyle(color: Colors.white70, fontSize: 14),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: isLampActive ? Colors.green : Colors.grey[700],
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              isLampActive ? 'AKTIF' : 'MATI',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+              ),
             ),
           ),
-        ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.info_outline, color: Colors.white70, size: 16),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  isAutoMode
+                      ? 'Mode otomatis aktif - Kontrol manual dinonaktifkan'
+                      : 'Mode manual - Anda dapat mengontrol lampu',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
+  }
+
+  Widget _buildSystemStatusCard() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF7C341F),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.memory, color: Colors.white, size: 28),
+              const SizedBox(width: 12),
+              const Text(
+                'Status Sistem',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildStatusItem(Icons.wifi, 'Koneksi\nIoT', systemStatus['iot']!),
+              _buildStatusItem(Icons.storage, 'Database', systemStatus['database']!),
+              _buildStatusItem(Icons.sensors, 'Sensor', systemStatus['sensor']!),
+              _buildStatusItem(Icons.settings_input_component, 'Akuator', systemStatus['actuator']!),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusItem(IconData icon, String label, String status) {
+    Color statusColor = status == 'aktif' ? Colors.green : 
+                        status == 'sitrep' ? Colors.green :
+                        status == 'auto' ? Colors.green : 
+                        status == 'manual' ? Colors.blue : Colors.grey;
+    
+    return Container(
+      width: 70,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: Colors.red[800], size: 28),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: statusColor,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              status,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 8,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoCard() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.info, color: Colors.grey[600], size: 24),
+              const SizedBox(width: 12),
+              const Text(
+                'Informasi Kontrol',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildInfoItem(
+            '• Mode Otomatis: Sistem akan mengontrol pompa dan lampu\n  secara otomatis berdasarkan data sensor.',
+          ),
+          const SizedBox(height: 8),
+          _buildInfoItem(
+            '• Mode Manual: Anda dapat mengontrol pompa dan lampu\n  secara manual melalui kontrol tombol.',
+          ),
+          const SizedBox(height: 8),
+          _buildInfoItem(
+            '• Status real-time: Status sistem akan langsung\n  terlihat di dashboard.',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoItem(String text) {
+    return Text(
+      text,
+      style: TextStyle(
+        color: Colors.grey[700],
+        fontSize: 13,
+        height: 1.5,
+      ),
+    );
+  }
+
+  // Firebase Backend Logic
+  void _toggleAutoMode() {
+    setState(() {
+      isAutoMode = !isAutoMode;
+      if (isAutoMode) {
+        // Aktifkan pompa dan lampu otomatis saat mode otomatis diaktifkan
+        isPumpActive = true;
+        isLampActive = true;
+      } else {
+        // Matikan pompa dan lampu saat mode manual diaktifkan
+        isPumpActive = false;
+        isLampActive = false;
+      }
+    });
+    
+    // Update to Firebase
+    _databaseRef.child('control/autoMode').set(isAutoMode);
+    _databaseRef.child('control/pump').set(isPumpActive);
+    _databaseRef.child('control/light').set(isLampActive);
+    
+    _logAction('Mode ${isAutoMode ? 'OTOMATIS' : 'MANUAL'} diaktifkan');
+    if (isAutoMode) {
+      _logAction('Pompa Air dan Lampu Tubuh DIHIDUPKAN (Auto Mode)');
+    } else {
+      _logAction('Pompa Air dan Lampu Tubuh DIMATIKAN (Manual Mode)');
+    }
+    
+    _showSnackbar(
+      isAutoMode 
+          ? 'Mode Otomatis Diaktifkan - Pompa & Lampu Menyala' 
+          : 'Mode Manual Diaktifkan - Pompa & Lampu Mati',
+      isAutoMode ? Colors.green : Colors.orange,
+    );
+  }
+
+  void _togglePump() {
+    setState(() {
+      isPumpActive = !isPumpActive;
+    });
+    
+    // Update to Firebase
+    _databaseRef.child('control/pump').set(isPumpActive);
+    _logAction('Pompa Air ${isPumpActive ? 'DIHIDUPKAN' : 'DIMATIKAN'}');
+    
+    _showSnackbar(
+      isPumpActive ? 'Pompa Air Diaktifkan' : 'Pompa Air Dimatikan',
+      isPumpActive ? Colors.blue : Colors.grey,
+    );
+  }
+
+  void _toggleLamp() {
+    setState(() {
+      isLampActive = !isLampActive;
+    });
+    
+    // Update to Firebase
+    _databaseRef.child('control/light').set(isLampActive);
+    _logAction('Lampu Tubuh ${isLampActive ? 'DIHIDUPKAN' : 'DIMATIKAN'}');
+    
+    _showSnackbar(
+      isLampActive ? 'Lampu Tubuh Diaktifkan' : 'Lampu Tubuh Dimatikan',
+      isLampActive ? Colors.orange : Colors.grey,
+    );
+  }
+
+  void _logAction(String action) {
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    _databaseRef.child('logs').push().set({
+      'timestamp': timestamp,
+      'action': action,
+      'type': 'control',
+    });
+  }
+
+  void _showSnackbar(String message, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    // Clean up any listeners if needed
+    super.dispose();
   }
 }

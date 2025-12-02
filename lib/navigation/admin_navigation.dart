@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../screens/admin/dashboard/admin_dashboard.dart';
 import '../screens/admin/settings/admin_settings.dart';
+import '../screens/admin/pump control/admin_controls.dart'; // TAMBAHKAN INI
 import '../providers/theme_provider.dart';
 
 class AdminNavigation extends StatefulWidget {
@@ -19,11 +20,9 @@ class _AdminNavigationState extends State<AdminNavigation> {
     const AdminDashboardScreen(),
     _buildPlaceholderScreen('Manajemen User'),
     _buildPlaceholderScreen('Manajemen Lahan'),
-    _buildPlaceholderScreen('Kontrol Pompa'),
+    const AdminControlsScreen(), // GANTI PLACEHOLDER DENGAN SCREEN ASLI
     const AdminSettingsScreen(),
   ];
-
-  // HAPUS BARIS INI: get Provider => null;
 
   static Widget _buildPlaceholderScreen(String title) {
     return Scaffold(
