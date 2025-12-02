@@ -1,3 +1,4 @@
+// ignore_for_file: undefined_class
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:intl/intl.dart';
@@ -11,7 +12,7 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   final DatabaseReference _databaseRef = FirebaseDatabase.instance.ref();
-  
+
   List<LogEntry> _logs = [];
   List<LogEntry> _currentData = [];
   bool _isLoading = true;
@@ -19,13 +20,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
   bool _isListening = false;
 
   // Warna konsisten dengan dashboard
-  final Color _primaryColor = const Color(0xFF006B5D); // Warna utama dashboard (suhu)
-  final Color _secondaryColor = const Color(0xFFB8860B); // Warna kelembaban udara
-  final Color _tertiaryColor = const Color(0xFF558B2F); // Warna kelembaban tanah
+  final Color _primaryColor =
+      const Color(0xFF006B5D); // Warna utama dashboard (suhu)
+  final Color _secondaryColor =
+      const Color(0xFFB8860B); // Warna kelembaban udara
+  final Color _tertiaryColor =
+      const Color(0xFF558B2F); // Warna kelembaban tanah
   final Color _accentColor = const Color(0xFFB71C1C); // Warna cahaya
   final Color _blueColor = const Color(0xFF1A237E); // Warna status aktuator
   final Color _greenColor = const Color(0xFF2E7D32); // Warna hijau tombol
-  
+
   @override
   void initState() {
     super.initState();
@@ -40,7 +44,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   void _initializeRealtimeListener() {
     print('🔄 Memulai realtime listener...');
-    
+
     // Listen untuk data realtime (current_data)
     _databaseRef.child('current_data').onValue.listen((DatabaseEvent event) {
       print('📡 Data realtime diterima');
@@ -68,7 +72,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     try {
       if (data != null && data is Map) {
         print('🔍 Memproses data realtime...');
-        
+
         final LogEntry currentLog = LogEntry(
           id: 'realtime_${DateTime.now().millisecondsSinceEpoch}',
           timestamp: DateTime.now().millisecondsSinceEpoch,
@@ -107,29 +111,32 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   void _loadHistoryData() {
     print('🔄 Memuat data history dari Firebase...');
-    
+
     setState(() {
       _isLoading = true;
       _hasError = false;
     });
 
-    _databaseRef.child('history_data')
-      .orderByKey()
-      .limitToLast(100) // Batasi untuk performa
-      .once()
-      .then((DatabaseEvent event) {
+    _databaseRef
+        .child('history_data')
+        .orderByKey()
+        .limitToLast(100) // Batasi untuk performa
+        .once()
+        .then((DatabaseEvent event) {
       try {
         final data = event.snapshot.value;
         final List<LogEntry> logs = [];
 
-        print('📊 Data history diterima: ${data != null ? "Data ada" : "null"}');
+        print(
+            '📊 Data history diterima: ${data != null ? "Data ada" : "null"}');
 
         if (data != null && data is Map) {
           data.forEach((key, value) {
             if (value is Map) {
               try {
-                final int timestamp = _parseTimestampFromData(value, key.toString());
-                
+                final int timestamp =
+                    _parseTimestampFromData(value, key.toString());
+
                 logs.add(LogEntry(
                   id: key.toString(),
                   timestamp: timestamp,
@@ -235,7 +242,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     } catch (e) {
       print('❌ Error parsing key $key: $e');
     }
-    
+
     return DateTime.now().millisecondsSinceEpoch;
   }
 
@@ -243,7 +250,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final plantStage = data['tahapan_tanaman']?.toString() ?? 'Tanaman';
     final soilCategory = data['kategori_tanah']?.toString() ?? '';
     final mode = data['mode_operasi']?.toString() ?? 'AUTO';
-    
+
     return '$plantStage - $soilCategory ($mode)';
   }
 
@@ -269,7 +276,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   List<LogEntry> get _allLogs {
     // Gabungkan current data dengan history, pastikan tidak ada duplikat
     final allLogs = [..._currentData, ..._logs];
-    
+
     // Hapus duplikat berdasarkan timestamp
     final uniqueLogs = <String, LogEntry>{};
     for (final log in allLogs) {
@@ -278,7 +285,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         uniqueLogs[key] = log;
       }
     }
-    
+
     return uniqueLogs.values.toList()
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
   }
@@ -420,9 +427,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   Widget _buildRealtimeStatus() {
     if (_currentData.isEmpty) return const SizedBox();
-    
+
     final currentLog = _currentData.first;
-    
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -438,7 +445,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
               color: _blueColor,
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.fiber_manual_record, color: Colors.white, size: 12),
+            child: const Icon(Icons.fiber_manual_record,
+                color: Colors.white, size: 12),
           ),
           const SizedBox(width: 8),
           Text(
@@ -451,17 +459,26 @@ class _HistoryScreenState extends State<HistoryScreen> {
           ),
           const SizedBox(width: 8),
           if (currentLog.temperature != null)
-            _buildSensorItem('🌡', '${currentLog.temperature!.toStringAsFixed(1)}°C', _primaryColor),
+            _buildSensorItem(
+                '🌡',
+                '${currentLog.temperature!.toStringAsFixed(1)}°C',
+                _primaryColor),
           if (currentLog.humidity != null)
-            _buildSensorItem('💧', '${currentLog.humidity!.toStringAsFixed(1)}%', _secondaryColor),
+            _buildSensorItem('💧',
+                '${currentLog.humidity!.toStringAsFixed(1)}%', _secondaryColor),
           if (currentLog.soilMoisture != null)
-            _buildSensorItem('🌱', '${currentLog.soilMoisture!.toStringAsFixed(1)}%', _tertiaryColor),
+            _buildSensorItem(
+                '🌱',
+                '${currentLog.soilMoisture!.toStringAsFixed(1)}%',
+                _tertiaryColor),
           if (currentLog.pumpStatus != null) ...[
             const Spacer(),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
-                color: currentLog.pumpStatus == 'ON' ? _greenColor.withOpacity(0.2) : Colors.grey.shade200,
+                color: currentLog.pumpStatus == 'ON'
+                    ? _greenColor.withOpacity(0.2)
+                    : Colors.grey.shade200,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
@@ -469,7 +486,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.bold,
-                  color: currentLog.pumpStatus == 'ON' ? _greenColor : Colors.grey.shade800,
+                  color: currentLog.pumpStatus == 'ON'
+                      ? _greenColor
+                      : Colors.grey.shade800,
                 ),
               ),
             ),
@@ -481,9 +500,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   Widget _buildSummaryCards() {
     final allLogs = _allLogs;
-    final drySoilCount = allLogs.where((log) => log.soilCategory == 'SANGAT KERING' || log.soilCategory == 'KERING').length;
+    final drySoilCount = allLogs
+        .where((log) =>
+            log.soilCategory == 'SANGAT KERING' || log.soilCategory == 'KERING')
+        .length;
     final pumpOnCount = allLogs.where((log) => log.pumpStatus == 'ON').length;
-    final autoModeCount = allLogs.where((log) => log.operationMode == 'AUTO').length;
+    final autoModeCount =
+        allLogs.where((log) => log.operationMode == 'AUTO').length;
     final realtimeCount = _currentData.length;
 
     return Container(
@@ -516,7 +539,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
               const Spacer(),
               if (realtimeCount > 0)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
                     color: _primaryColor.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
@@ -536,10 +560,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _buildSummaryCard('Total Data', allLogs.length.toString(), Icons.list, _primaryColor),
-              _buildSummaryCard('Tanah Kering', drySoilCount.toString(), Icons.grass, _tertiaryColor),
-              _buildSummaryCard('Pompa ON', pumpOnCount.toString(), Icons.water_drop, _blueColor),
-              _buildSummaryCard('Auto Mode', autoModeCount.toString(), Icons.smart_toy, _greenColor),
+              _buildSummaryCard('Total Data', allLogs.length.toString(),
+                  Icons.list, _primaryColor),
+              _buildSummaryCard('Tanah Kering', drySoilCount.toString(),
+                  Icons.grass, _tertiaryColor),
+              _buildSummaryCard('Pompa ON', pumpOnCount.toString(),
+                  Icons.water_drop, _blueColor),
+              _buildSummaryCard('Auto Mode', autoModeCount.toString(),
+                  Icons.smart_toy, _greenColor),
             ],
           ),
         ],
@@ -547,7 +575,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  Widget _buildSummaryCard(String title, String value, IconData icon, Color color) {
+  Widget _buildSummaryCard(
+      String title, String value, IconData icon, Color color) {
     return Column(
       children: [
         Container(
@@ -635,7 +664,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final date = DateTime.fromMillisecondsSinceEpoch(log.timestamp);
     final timeFormat = DateFormat('HH:mm:ss');
     final dateFormat = DateFormat('dd/MM/yyyy');
-    final isToday = DateFormat('yyyyMMdd').format(date) == DateFormat('yyyyMMdd').format(DateTime.now());
+    final isToday = DateFormat('yyyyMMdd').format(date) ==
+        DateFormat('yyyyMMdd').format(DateTime.now());
     final isRealtime = log.isRealtime;
 
     return Container(
@@ -688,7 +718,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(
                         color: Colors.purple.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(6),
@@ -705,7 +736,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     const Spacer(),
                     if (isRealtime)
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: _blueColor.withOpacity(0.2),
                           borderRadius: BorderRadius.circular(6),
@@ -721,16 +753,21 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       ),
                     const SizedBox(width: 4),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: log.operationMode == 'AUTO' ? _blueColor.withOpacity(0.1) : Colors.orange.shade50,
+                        color: log.operationMode == 'AUTO'
+                            ? _blueColor.withOpacity(0.1)
+                            : Colors.orange.shade50,
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
                         'Mode: ${log.operationMode ?? 'AUTO'}',
                         style: TextStyle(
                           fontSize: 10,
-                          color: log.operationMode == 'AUTO' ? _blueColor : Colors.orange.shade700,
+                          color: log.operationMode == 'AUTO'
+                              ? _blueColor
+                              : Colors.orange.shade700,
                         ),
                       ),
                     ),
@@ -752,7 +789,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   runSpacing: 4,
                   children: _buildStatusChips(log),
                 ),
-                
+
                 // Tampilkan datetime asli dari Firebase jika ada
                 if (log.datetime != null) ...[
                   const SizedBox(height: 6),
@@ -775,11 +812,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: isRealtime 
-                    ? _blueColor.withOpacity(0.2) 
-                    : isToday 
-                      ? _primaryColor.withOpacity(0.2) 
-                      : Colors.grey.shade100,
+                  color: isRealtime
+                      ? _blueColor.withOpacity(0.2)
+                      : isToday
+                          ? _primaryColor.withOpacity(0.2)
+                          : Colors.grey.shade100,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -787,20 +824,24 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
-                    color: isRealtime 
-                      ? _blueColor 
-                      : isToday 
-                        ? _primaryColor 
-                        : Colors.grey.shade800,
+                    color: isRealtime
+                        ? _blueColor
+                        : isToday
+                            ? _primaryColor
+                            : Colors.grey.shade800,
                   ),
                 ),
               ),
               const SizedBox(height: 4),
               Text(
-                isRealtime ? 'LIVE NOW' : (isToday ? 'Hari Ini' : dateFormat.format(date)),
+                isRealtime
+                    ? 'LIVE NOW'
+                    : (isToday ? 'Hari Ini' : dateFormat.format(date)),
                 style: TextStyle(
                   fontSize: 10,
-                  color: isRealtime ? _blueColor.withOpacity(0.8) : Colors.grey.shade600,
+                  color: isRealtime
+                      ? _blueColor.withOpacity(0.8)
+                      : Colors.grey.shade600,
                   fontWeight: isRealtime ? FontWeight.bold : FontWeight.normal,
                 ),
               ),
@@ -814,13 +855,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
   List<Widget> _buildSensorData(LogEntry log) {
     return [
       if (log.temperature != null)
-        _buildSensorItem('🌡', '${log.temperature!.toStringAsFixed(1)}°C', _primaryColor),
+        _buildSensorItem(
+            '🌡', '${log.temperature!.toStringAsFixed(1)}°C', _primaryColor),
       if (log.humidity != null)
-        _buildSensorItem('💧', '${log.humidity!.toStringAsFixed(1)}%', _secondaryColor),
+        _buildSensorItem(
+            '💧', '${log.humidity!.toStringAsFixed(1)}%', _secondaryColor),
       if (log.soilMoisture != null)
-        _buildSensorItem('🌱', '${log.soilMoisture!.toStringAsFixed(1)}%', _tertiaryColor),
+        _buildSensorItem(
+            '🌱', '${log.soilMoisture!.toStringAsFixed(1)}%', _tertiaryColor),
       if (log.brightness != null)
-        _buildSensorItem('💡', '${log.brightness!.toStringAsFixed(1)}%', _accentColor),
+        _buildSensorItem(
+            '💡', '${log.brightness!.toStringAsFixed(1)}%', _accentColor),
     ];
   }
 
@@ -844,7 +889,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   List<Widget> _buildStatusChips(LogEntry log) {
     final chips = <Widget>[];
-    
+
     if (log.soilCategory != null) {
       chips.add(
         Container(
@@ -863,20 +908,23 @@ class _HistoryScreenState extends State<HistoryScreen> {
         ),
       );
     }
-    
+
     if (log.pumpStatus != null) {
       chips.add(
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           decoration: BoxDecoration(
-            color: log.pumpStatus == 'ON' ? _greenColor.withOpacity(0.1) : Colors.grey.shade50,
+            color: log.pumpStatus == 'ON'
+                ? _greenColor.withOpacity(0.1)
+                : Colors.grey.shade50,
             borderRadius: BorderRadius.circular(6),
           ),
           child: Text(
             'Pompa: ${log.pumpStatus}',
             style: TextStyle(
               fontSize: 10,
-              color: log.pumpStatus == 'ON' ? _greenColor : Colors.grey.shade700,
+              color:
+                  log.pumpStatus == 'ON' ? _greenColor : Colors.grey.shade700,
             ),
           ),
         ),
@@ -888,7 +936,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           decoration: BoxDecoration(
-            color: log.timeOfDay == 'Siang' ? _secondaryColor.withOpacity(0.1) : _blueColor.withOpacity(0.1),
+            color: log.timeOfDay == 'Siang'
+                ? _secondaryColor.withOpacity(0.1)
+                : _blueColor.withOpacity(0.1),
             borderRadius: BorderRadius.circular(6),
           ),
           child: Text(
@@ -901,7 +951,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         ),
       );
     }
-    
+
     return chips;
   }
 
@@ -1066,7 +1116,7 @@ class LogEntry {
   final double? soilMoisture;
   final double? value;
   final String? unit;
-  
+
   final double? brightness;
   final String? soilCategory;
   final String? lightCategory;

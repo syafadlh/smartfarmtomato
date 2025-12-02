@@ -1,3 +1,4 @@
+// ignore_for_file: unused_field, unused_local_variable
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
@@ -506,7 +507,7 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
                       trailing: Switch(
                         value: _notificationsEnabled,
                         onChanged: _toggleNotifications,
-                        activeColor: _primaryColor,
+                        activeThumbColor: _primaryColor,
                         activeTrackColor: _primaryColor.withOpacity(0.3),
                       ),
                     ),
@@ -524,7 +525,7 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
                               _showSnackBar(
                                   'Mode gelap ${value ? 'diaktifkan' : 'dinonaktifkan'}');
                             },
-                            activeColor: _blueColor,
+                            activeThumbColor: _blueColor,
                             activeTrackColor: _blueColor.withOpacity(0.3),
                           );
                         },
@@ -538,7 +539,7 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
                       trailing: Switch(
                         value: _autoRefreshEnabled,
                         onChanged: _toggleAutoRefresh,
-                        activeColor: _secondaryColor,
+                        activeThumbColor: _secondaryColor,
                         activeTrackColor: _secondaryColor.withOpacity(0.3),
                       ),
                     ),
