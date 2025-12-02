@@ -73,11 +73,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _showAboutDialog() {
     final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
     final isDarkMode = themeProvider.isDarkMode;
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor:
+            isDarkMode ? Theme.of(context).colorScheme.surface : Colors.white,
         title: Row(
           children: [
             Icon(Icons.agriculture, color: _primaryColor),
@@ -86,7 +87,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               'Tentang TomaFarm',
               style: TextStyle(
                 fontWeight: FontWeight.bold,
-                color: Colors.black,
+                color: isDarkMode
+                    ? Theme.of(context).colorScheme.onSurface
+                    : Colors.black,
               ),
             ),
           ],
@@ -130,7 +133,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 'Dilengkapi dengan berbagai fitur canggih untuk memastikan tanaman tomat tumbuh optimal.',
                 style: TextStyle(
                   height: 1.5,
-                  color: Colors.black87,
+                  color: isDarkMode
+                      ? Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withOpacity(0.87)
+                      : Colors.black87,
                 ),
               ),
               const SizedBox(height: 16),
@@ -138,20 +146,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 '🎯 Fitur Utama:',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
-                  color: Colors.black,
+                  color: isDarkMode
+                      ? Theme.of(context).colorScheme.onSurface
+                      : Colors.black,
                 ),
               ),
               const SizedBox(height: 8),
-              _buildFeatureItem('📊 Monitoring real-time sensor'),
-              _buildFeatureItem('💧 Kontrol otomatis pompa air'),
-              _buildFeatureItem('💡 Kontrol lampu tumbuh'),
-              _buildFeatureItem('📈 Riwayat data dan grafik'),
-              _buildFeatureItem('🔔 Notifikasi cerdas'),
+              _buildFeatureItem('📊 Monitoring real-time sensor', isDarkMode),
+              _buildFeatureItem('💧 Kontrol otomatis pompa air', isDarkMode),
+              _buildFeatureItem('💡 Kontrol lampu tumbuh', isDarkMode),
+              _buildFeatureItem('📈 Riwayat data dan grafik', isDarkMode),
+              _buildFeatureItem('🔔 Notifikasi cerdas', isDarkMode),
               const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
+                  color: isDarkMode
+                      ? Theme.of(context).colorScheme.surfaceVariant
+                      : Colors.grey.shade100,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Column(
@@ -162,15 +174,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
-                        color: Colors.black,
+                        color: isDarkMode
+                            ? Theme.of(context).colorScheme.onSurface
+                            : Colors.black,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'Versi: 1.0.0\nBuild: 2024.12.01\nDikembangkan untuk Project Based Learning',
                       style: TextStyle(
-                        fontSize: 11, 
-                        color: Colors.grey
+                        fontSize: 11,
+                        color: isDarkMode
+                            ? Theme.of(context).colorScheme.onSurfaceVariant
+                            : Colors.grey,
                       ),
                     ),
                   ],
@@ -194,7 +210,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildFeatureItem(String text) {
+  Widget _buildFeatureItem(String text, bool isDarkMode) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -206,7 +222,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               text,
               style: TextStyle(
                 fontSize: 13,
-                color: Colors.black87,
+                color: isDarkMode
+                    ? Theme.of(context).colorScheme.onSurface.withOpacity(0.87)
+                    : Colors.black87,
               ),
             ),
           ),
@@ -267,7 +285,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _performLogout() async {
     try {
       await _auth.signOut();
-      
+
       if (mounted) {
         Navigator.pushAndRemoveUntil(
           context,
@@ -289,7 +307,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _showAccountInfo() {
     final user = _auth.currentUser;
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -314,11 +332,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _buildAccountInfoItem('Email', user?.email ?? 'Tidak tersedia'),
             _buildAccountInfoItem(
               'Status Email',
-              user?.emailVerified == true ? 'Terverifikasi' : 'Belum diverifikasi',
+              user?.emailVerified == true
+                  ? 'Terverifikasi'
+                  : 'Belum diverifikasi',
             ),
             _buildAccountInfoItem(
               'Bergabung',
-              user?.metadata.creationTime != null 
+              user?.metadata.creationTime != null
                   ? '${DateTime.now().difference(user!.metadata.creationTime!).inDays} hari yang lalu'
                   : 'Tidak tersedia',
             ),
@@ -368,8 +388,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final user = _auth.currentUser;
-    
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -400,7 +421,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         color: Colors.white.withOpacity(0.2),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(Icons.person, color: Colors.white, size: 32),
+                      child: const Icon(Icons.person,
+                          color: Colors.white, size: 32),
                     ),
                     const SizedBox(width: 16),
                     Expanded(
@@ -408,7 +430,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            user?.displayName ?? user?.email?.split('@').first ?? 'Pengguna TomaFarm',
+                            user?.displayName ??
+                                user?.email?.split('@').first ??
+                                'Pengguna TomaFarm',
                             style: const TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
@@ -427,15 +451,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           Row(
                             children: [
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
                                 decoration: BoxDecoration(
-                                  color: user?.emailVerified == true 
+                                  color: user?.emailVerified == true
                                       ? Colors.white.withOpacity(0.3)
                                       : _secondaryColor,
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
-                                  user?.emailVerified == true ? '✓ Email Terverifikasi' : '! Verifikasi Email',
+                                  user?.emailVerified == true
+                                      ? '✓ Email Terverifikasi'
+                                      : '! Verifikasi Email',
                                   style: const TextStyle(
                                     fontSize: 10,
                                     color: Colors.white,
@@ -461,7 +488,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // Settings List
               Container(
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: theme.cardColor,
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: [
                     BoxShadow(
@@ -478,11 +505,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       padding: const EdgeInsets.all(20),
                       child: Row(
                         children: [
-                          Icon(
-                            Icons.settings, 
-                            color: _primaryColor, 
-                            size: 20
-                          ),
+                          Icon(Icons.settings, color: _primaryColor, size: 20),
                           const SizedBox(width: 8),
                           Text(
                             'Pengaturan Aplikasi',
@@ -517,7 +540,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             value: themeProvider.isDarkMode,
                             onChanged: (value) {
                               themeProvider.toggleTheme(value);
-                              _showSnackBar('Mode gelap ${value ? 'diaktifkan' : 'dinonaktifkan'}');
+                              _showSnackBar(
+                                  'Mode gelap ${value ? 'diaktifkan' : 'dinonaktifkan'}');
                             },
                             activeColor: _blueColor,
                             activeTrackColor: _blueColor.withOpacity(0.3),
@@ -543,7 +567,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       title: 'Bahasa',
                       subtitle: 'Bahasa Indonesia',
                       trailing: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
                           color: _primaryColor.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(8),
@@ -566,10 +591,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       icon: Icons.info_outline,
                       title: 'Tentang Aplikasi',
                       subtitle: 'Versi 1.0.0',
-                      trailing: Icon(
-                        Icons.chevron_right, 
-                        color: Colors.grey
-                      ),
+                      trailing: Icon(Icons.chevron_right, color: Colors.grey),
                       onTap: _showAboutDialog,
                     ),
                   ],
@@ -591,7 +613,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 16, horizontal: 20),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
@@ -627,6 +650,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required Widget trailing,
     VoidCallback? onTap,
   }) {
+    final theme = Theme.of(context);
     return ListTile(
       leading: Container(
         padding: const EdgeInsets.all(10),
@@ -634,25 +658,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
           color: _primaryColor.withOpacity(0.1),
           shape: BoxShape.circle,
         ),
-        child: Icon(
-          icon, 
-          color: _primaryColor, 
-          size: 22
-        ),
+        child: Icon(icon, color: _primaryColor, size: 22),
       ),
       title: Text(
         title,
         style: TextStyle(
           fontSize: 16,
           fontWeight: FontWeight.w600,
-          color: Colors.black,
+          color: theme.colorScheme.onSurface,
         ),
       ),
       subtitle: Text(
         subtitle,
         style: TextStyle(
           fontSize: 13,
-          color: Colors.grey.shade600,
+          color: theme.colorScheme.onSurface.withOpacity(0.6),
         ),
       ),
       trailing: trailing,

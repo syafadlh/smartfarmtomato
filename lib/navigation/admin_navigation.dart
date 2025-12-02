@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../screens/admin/dashboard/admin_dashboard.dart';
 import '../screens/admin/settings/admin_settings.dart';
 import '../screens/admin/pump control/admin_controls.dart'; // TAMBAHKAN INI
+import '../screens/admin/Farmer Management/admin_farmers.dart';
 import '../providers/theme_provider.dart';
 
 class AdminNavigation extends StatefulWidget {
@@ -18,9 +19,9 @@ class _AdminNavigationState extends State<AdminNavigation> {
 
   final List<Widget> _screens = [
     const AdminDashboardScreen(),
-    _buildPlaceholderScreen('Manajemen User'),
+    const AdminFarmersScreen(),
     _buildPlaceholderScreen('Manajemen Lahan'),
-    const AdminControlsScreen(), // GANTI PLACEHOLDER DENGAN SCREEN ASLI
+    const AdminControlsScreen(),
     const AdminSettingsScreen(),
   ];
 
@@ -63,7 +64,7 @@ class _AdminNavigationState extends State<AdminNavigation> {
   @override
   Widget build(BuildContext context) {
     final themeProvider = Provider.of<ThemeProvider>(context);
-    
+
     return Scaffold(
       body: _screens[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
@@ -74,9 +75,12 @@ class _AdminNavigationState extends State<AdminNavigation> {
           });
         },
         type: BottomNavigationBarType.fixed,
-        backgroundColor: Theme.of(context).bottomNavigationBarTheme.backgroundColor,
-        selectedItemColor: Theme.of(context).bottomNavigationBarTheme.selectedItemColor,
-        unselectedItemColor: Theme.of(context).bottomNavigationBarTheme.unselectedItemColor,
+        backgroundColor:
+            Theme.of(context).bottomNavigationBarTheme.backgroundColor,
+        selectedItemColor:
+            Theme.of(context).bottomNavigationBarTheme.selectedItemColor,
+        unselectedItemColor:
+            Theme.of(context).bottomNavigationBarTheme.unselectedItemColor,
         selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold),
         items: const [
           BottomNavigationBarItem(
