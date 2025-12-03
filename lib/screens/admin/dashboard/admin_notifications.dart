@@ -40,7 +40,7 @@ class AdminNotificationService {
 
       if (data != null) {
         data.forEach((key, value) {
-          notifications.add(AdminNotificationItem(
+          notifications.add(NotificationItem(
             id: key.toString(),
             title: value['title']?.toString() ?? 'Notifikasi Admin',
             message: value['message']?.toString() ?? '',
@@ -144,7 +144,8 @@ class AdminNotificationService {
   static Future<void> createSystemAlert(
       String nodeId, String alertType, String message) async {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    await _databaseRef.child('admin_notifications').push().set({
+    final newRef = _databaseRef.child('admin_notifications').push();
+    await newRef.set({
       'title': 'Alert Sistem - $alertType',
       'message': 'Node $nodeId: $message',
       'timestamp': timestamp,
@@ -153,7 +154,7 @@ class AdminNotificationService {
       'nodeId': nodeId,
     });
 
-    print('🔔 System alert created: $title (Key: ${newRef.key})');
+    print('🔔 System alert created: Alert Sistem - $alertType (Key: ${newRef.key})');
   }
 
   // Method untuk notifikasi penyiraman
