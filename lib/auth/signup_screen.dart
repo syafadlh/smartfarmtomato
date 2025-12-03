@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'signin_screen.dart';
+import 'package:smartfarmtomato/services/admin_notifications.dart'; // Import service notifikasi
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -61,6 +62,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
           "status": "active",
           "displayName": _nameController.text.trim(),
         });
+
+        // ✅ KIRIM NOTIFIKASI KE ADMIN JIKA PETANI BARU
+        if (role == 'farmer') {
+          await AdminNotificationService.notifyNewFarmerRegistration(
+            _nameController.text.trim(),
+            user.email!,
+            user.uid,
+          );
+          print('📢 Notifikasi: Petani baru telah mendaftar');
+        }
 
         _showSnack("🎉 Akun berhasil dibuat! Silakan login.", false);
 
