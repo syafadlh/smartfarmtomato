@@ -1,10 +1,48 @@
-// ignore_for_file: undefined_class, unused_field, unused_local_variable
+import 'dart:async'; 
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:smartfarmtomato/providers/theme_provider.dart';
 import 'admin_notifications.dart';
+
+class AdminNotificationItem {
+  final String id;
+  final String title;
+  final String message;
+  final String source;
+  final bool isRead;
+  final int timestamp;
+  final IconData typeIcon;
+  final Color typeColor;
+
+  AdminNotificationItem({
+    required this.id,
+    required this.title,
+    required this.message,
+    required this.source,
+    required this.isRead,
+    required this.timestamp,
+    required this.typeIcon,
+    required this.typeColor,
+  });
+
+  String get formattedTime {
+    final now = DateTime.now();
+    final time = DateTime.fromMillisecondsSinceEpoch(timestamp);
+    final difference = now.difference(time);
+    
+    if (difference.inMinutes < 1) {
+      return 'Baru saja';
+    } else if (difference.inMinutes < 60) {
+      return '${difference.inMinutes}m lalu';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours}h lalu';
+    } else {
+      return DateFormat('dd/MM').format(time);
+    }
+  }
+}
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -15,7 +53,7 @@ class AdminDashboardScreen extends StatefulWidget {
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final DatabaseReference _databaseRef = FirebaseDatabase.instance.ref();
-
+  
   // Data statistik
   int _totalFarmers = 0;
   int _totalLands = 0;
@@ -23,17 +61,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _criticalAlerts = 0;
   int _totalHarvests = 0;
   double _averageYield = 0.0;
-
-  // Data sensor dari semua lahan
-  Map<String, dynamic> _overallSensorData = {
-    'temperature': 0.0,
-    'humidity': 0.0,
-    'soilMoisture': 0.0,
-    'lightIntensity': 0.0,
+  
+  // Data sensor realtime dari current_data
+  Map<String, dynamic> sensorData = {
+    'suhu': 0.0,
+    'status_suhu': 'Normal',
+    'kelembaban_udara': 0.0,
+    'status_kelembaban': 'Normal',
+    'kelembaban_tanah': 0.0,
+    'kategori_tanah': 'Normal',
+    'kecerahan': 0.0,
+    'kategori_cahaya': 'Normal',
   };
 
-  // Status sistem
-  Map<String, dynamic> _systemStatus = {
+  // Status aktuator
+  Map<String, dynamic> actuatorData = {
     'pump': false,
     'light': false,
     'autoMode': true,
@@ -41,63 +83,199 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   // Notifikasi
   int _unreadNotifications = 0;
-  bool _notificationsEnabled = true;
-
-  // Data terbaru
-  List<Map<String, dynamic>> _recentActivities = [];
-  List<Map<String, dynamic>> _systemAlerts = [];
-
+  
+  // Alert kritis HANYA dari current_data dan history_data
+  List<Map<String, dynamic>> _criticalAlertsList = [];
+  
   bool _isLoading = true;
 
-  // Warna konsisten dengan dashboard lainnya
-  final Color _primaryColor = const Color(0xFF006B5D); // Warna utama
-  final Color _secondaryColor = const Color(0xFFB8860B); // Warna sekunder
-  final Color _tertiaryColor = const Color(0xFF558B2F); // Warna tersier
-  final Color _blueColor = const Color(0xFF1A237E); // Warna biru
-  final Color _greenColor = const Color(0xFF2E7D32); // Warna hijau
-  final Color _accentColor = const Color(0xFFB71C1C); // Warna aksen
+  // Warna konsisten
+  final Color _primaryColor = const Color(0xFF006B5D);
+  final Color _secondaryColor = const Color(0xFFB8860B);
+  final Color _tertiaryColor = const Color(0xFF558B2F);
+  final Color _blueColor = const Color(0xFF1A237E);
+  final Color _lightColor = const Color(0xFFB71C1C);
+  final Color _greenColor = const Color(0xFF2E7D32);
+
+  // Stream subscriptions
+  StreamSubscription? _currentDataStream;
+  StreamSubscription? _controlStream;
+  StreamSubscription? _notificationsStream;
+  StreamSubscription? _alertsStream;
+  StreamSubscription? _usersStream;
+  StreamSubscription? _landsStream;
+  StreamSubscription? _nodesStream;
+  StreamSubscription? _harvestsStream;
 
   @override
   void initState() {
     super.initState();
     _initializeDashboard();
-    _loadNotificationSettings();
     _setupNotificationListener();
+    _setupRealtimeListener();
+    _setupAlertListeners();
+  }
+
+  @override
+  void dispose() {
+    // Clean up semua stream subscriptions
+    _currentDataStream?.cancel();
+    _controlStream?.cancel();
+    _notificationsStream?.cancel();
+    _alertsStream?.cancel();
+    _usersStream?.cancel();
+    _landsStream?.cancel();
+    _nodesStream?.cancel();
+    _harvestsStream?.cancel();
+    super.dispose();
   }
 
   void _initializeDashboard() {
     _loadStatistics();
-    _loadOverallSensorData();
-    _loadSystemStatus();
-    _loadRecentActivities();
-    _loadSystemAlerts();
-  }
-
-  void _loadNotificationSettings() async {
-    setState(() {
-      _notificationsEnabled = true;
-    });
+    _loadCriticalAlerts();
   }
 
   void _setupNotificationListener() {
-    if (_notificationsEnabled) {
-      AdminNotificationService.getNotifications().listen((notifications) {
-        final unread = notifications.where((n) => !n.isRead).length;
-        setState(() {
-          _unreadNotifications = unread;
-        });
+    _notificationsStream = AdminNotificationService.getNotifications().listen((notifications) {
+      if (!mounted) return;
+      
+      final unread = notifications.where((n) => !n.isRead).length;
+      setState(() {
+        _unreadNotifications = unread;
       });
-    }
+    });
   }
 
+  // Setup realtime listener dari current_data dengan error handling
+  void _setupRealtimeListener() {
+    _currentDataStream = _databaseRef.child('current_data').onValue.listen((event) {
+      if (!mounted) return;
+      
+      try {
+        final data = event.snapshot.value;
+
+        if (data != null && data is Map) {
+          setState(() {
+            sensorData = {
+              'suhu': _toDouble(data['suhu']),
+              'status_suhu': data['status_suhu']?.toString() ?? 'Normal',
+              'kelembaban_udara': _toDouble(data['kelembaban_udara']),
+              'status_kelembaban':
+                  data['status_kelembaban']?.toString() ?? 'Normal',
+              'kelembaban_tanah': _toDouble(data['kelembaban_tanah']),
+              'kategori_tanah': data['kategori_tanah']?.toString() ?? 'Normal',
+              'kecerahan': _toDouble(data['kecerahan']),
+              'kategori_cahaya':
+                  data['kategori_cahaya']?.toString() ?? 'Normal',
+            };
+            _isLoading = false;
+          });
+        }
+      } catch (e) {
+        print('❌ Admin: Error reading sensor data: $e');
+      }
+    });
+
+    _controlStream = _databaseRef.child('control').onValue.listen((event) {
+      if (!mounted) return;
+      
+      try {
+        final data = event.snapshot.value;
+
+        if (data != null && data is Map) {
+          setState(() {
+            actuatorData = {
+              'pump': data['pump'] == true,
+              'light': data['light'] == true,
+              'autoMode': data['autoMode'] == true,
+            };
+          });
+        }
+      } catch (e) {
+        print('❌ Admin: Error reading control data: $e');
+      }
+    });
+
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted && _isLoading) {
+        print('⚠️ Admin: No data received, using default values');
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    });
+  }
+
+  // Setup listener untuk alert HANYA dari current_data dan history_data
+  void _setupAlertListeners() {
+    _alertsStream = _databaseRef.child('admin_notifications')
+      .orderByChild('type')
+      .equalTo('error')
+      .onValue.listen((event) {
+        if (!mounted) return;
+        
+        final data = event.snapshot.value as Map<dynamic, dynamic>?;
+        if (data != null) {
+          final unresolvedAlerts = data.values.where((alert) => 
+            alert['isRead'] != true && 
+            (alert['source'] == 'current_data' || alert['source'] == 'history_data')
+          ).length;
+          
+          setState(() {
+            _criticalAlerts = unresolvedAlerts;
+          });
+        }
+      });
+  }
+
+  // Load alert kritis HANYA dari notifikasi
+  void _loadCriticalAlerts() {
+    _alertsStream?.cancel(); // Cancel previous stream
+    _alertsStream = _databaseRef.child('admin_notifications')
+      .orderByChild('timestamp')
+      .limitToLast(10)
+      .onValue.listen((event) {
+        if (!mounted) return;
+        
+        final data = event.snapshot.value as Map<dynamic, dynamic>?;
+        final List<Map<String, dynamic>> alerts = [];
+        
+        if (data != null) {
+          data.forEach((key, value) {
+            // Hanya ambil alert error dari current_data dan history_data
+            if ((value['type'] == 'error' || value['type'] == 'warning') && 
+                value['isRead'] != true &&
+                (value['source'] == 'current_data' || value['source'] == 'history_data')) {
+              
+              alerts.add({
+                'id': key.toString(),
+                'title': value['title']?.toString() ?? 'Alert',
+                'message': value['message']?.toString() ?? '',
+                'severity': value['type'] == 'error' ? 'high' : 'medium',
+                'timestamp': value['timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
+                'source': value['source']?.toString() ?? 'system',
+                'alertType': value['alertType']?.toString(),
+              });
+            }
+          });
+          
+          // Sort by timestamp descending
+          alerts.sort((a, b) => (b['timestamp'] as int).compareTo(a['timestamp'] as int));
+          
+          setState(() {
+            _criticalAlertsList = alerts.take(5).toList();
+            _criticalAlerts = alerts.length;
+          });
+        }
+      });
+  }
+
+  // Load statistik dengan error handling
   void _loadStatistics() {
-    // Total petani
-    _databaseRef
-        .child('users')
-        .orderByChild('role')
-        .equalTo('farmer')
-        .onValue
-        .listen((event) {
+    _usersStream?.cancel();
+    _usersStream = _databaseRef.child('users').orderByChild('role').equalTo('farmer').onValue.listen((event) {
+      if (!mounted) return;
+      
       final data = event.snapshot.value as Map<dynamic, dynamic>?;
       if (data != null) {
         setState(() {
@@ -106,45 +284,45 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       }
     });
 
-    // Total lahan/nodes
-    _databaseRef.child('nodes').onValue.listen((event) {
+    _landsStream?.cancel();
+    _landsStream = _databaseRef.child('lands').onValue.listen((event) {
+      if (!mounted) return;
+      
       final data = event.snapshot.value as Map<dynamic, dynamic>?;
       if (data != null) {
         setState(() {
           _totalLands = data.length;
-          _activeNodes =
-              data.values.where((node) => node['status'] == 'online').length;
         });
       }
     });
 
-    // Alert kritis
-    _databaseRef
-        .child('alerts')
-        .orderByChild('severity')
-        .equalTo('high')
-        .onValue
-        .listen((event) {
+    _nodesStream?.cancel();
+    _nodesStream = _databaseRef.child('nodes').onValue.listen((event) {
+      if (!mounted) return;
+      
       final data = event.snapshot.value as Map<dynamic, dynamic>?;
       if (data != null) {
         setState(() {
-          _criticalAlerts = data.length;
+          _activeNodes = data.values.where((node) => 
+            node['status'] == 'online').length;
         });
       }
     });
 
-    // Data panen
-    _databaseRef.child('harvests').onValue.listen((event) {
+    _harvestsStream?.cancel();
+    _harvestsStream = _databaseRef.child('harvests').onValue.listen((event) {
+      if (!mounted) return;
+      
       final data = event.snapshot.value as Map<dynamic, dynamic>?;
       if (data != null) {
         double totalYield = 0;
         int harvestCount = 0;
-
+        
         data.forEach((key, value) {
           totalYield += (value['yield'] ?? 0).toDouble();
           harvestCount++;
         });
-
+        
         setState(() {
           _totalHarvests = harvestCount;
           _averageYield = harvestCount > 0 ? totalYield / harvestCount : 0.0;
@@ -153,119 +331,28 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     });
   }
 
-  void _loadOverallSensorData() {
-    _databaseRef.child('sensorData').onValue.listen((event) {
-      try {
-        final data = event.snapshot.value;
-        if (data != null && data is Map) {
-          setState(() {
-            _overallSensorData = {
-              'temperature': _toDouble(data['temperature']),
-              'humidity': _toDouble(data['humidity']),
-              'soilMoisture': _toDouble(data['soilMoisture']),
-              'lightIntensity': _toDouble(data['lightIntensity']),
-            };
-            _isLoading = false;
-          });
-        }
-      } catch (e) {
-        print('Error reading sensor data: $e');
+  String _formatTimeAgo(dynamic timestamp) {
+    if (timestamp == null) return 'Baru saja';
+    
+    try {
+      final now = DateTime.now();
+      final time = DateTime.fromMillisecondsSinceEpoch(timestamp is int ? timestamp : int.tryParse(timestamp.toString()) ?? 0);
+      final difference = now.difference(time);
+      
+      if (difference.inMinutes < 1) {
+        return 'Baru saja';
+      } else if (difference.inMinutes < 60) {
+        return '${difference.inMinutes} menit lalu';
+      } else if (difference.inHours < 24) {
+        return '${difference.inHours} jam lalu';
+      } else if (difference.inDays < 30) {
+        return '${difference.inDays} hari lalu';
+      } else {
+        return DateFormat('dd/MM/yyyy').format(time);
       }
-    });
-  }
-
-  void _loadSystemStatus() {
-    _databaseRef.child('control').onValue.listen((event) {
-      try {
-        final data = event.snapshot.value;
-        if (data != null && data is Map) {
-          setState(() {
-            _systemStatus = {
-              'pump': data['pump'] == true,
-              'light': data['light'] == true,
-              'autoMode': data['autoMode'] == true,
-            };
-          });
-        }
-      } catch (e) {
-        print('Error reading control data: $e');
-      }
-    });
-  }
-
-  void _loadRecentActivities() {
-    // Aktivitas terbaru dari semua petani
-    setState(() {
-      _recentActivities = [
-        {
-          'user': 'Budi Santoso',
-          'action': 'Menanam tomat',
-          'time': '2 jam lalu',
-          'icon': Icons.agriculture,
-          'color': _tertiaryColor,
-        },
-        {
-          'user': 'Siti Rahayu',
-          'action': 'Mengaktifkan irigasi',
-          'time': '4 jam lalu',
-          'icon': Icons.water_drop,
-          'color': _blueColor,
-        },
-        {
-          'user': 'Ahmad Wijaya',
-          'action': 'Panen tomat',
-          'time': '6 jam lalu',
-          'icon': Icons.emoji_events,
-          'color': _secondaryColor,
-        },
-        {
-          'user': 'Maria Dewi',
-          'action': 'Update pengaturan',
-          'time': '8 jam lalu',
-          'icon': Icons.settings,
-          'color': Colors.purple,
-        },
-      ];
-    });
-  }
-
-  void _loadSystemAlerts() {
-    _databaseRef
-        .child('alerts')
-        .orderByChild('timestamp')
-        .limitToLast(5)
-        .onValue
-        .listen((event) {
-      final data = event.snapshot.value as Map<dynamic, dynamic>?;
-      final List<Map<String, dynamic>> alerts = [];
-
-      if (data != null) {
-        data.forEach((key, value) {
-          alerts.add({
-            'id': key,
-            'title': value['title'] ?? 'Alert',
-            'message': value['message'] ?? '',
-            'severity': value['severity'] ?? 'medium',
-            'nodeId': value['nodeId'],
-            'timestamp': value['timestamp'],
-          });
-        });
-
-        setState(() {
-          _systemAlerts = alerts.reversed.toList();
-          _isLoading = false;
-        });
-      }
-    });
-
-    // Timeout loading
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted && _isLoading) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    });
+    } catch (e) {
+      return 'Baru saja';
+    }
   }
 
   double _toDouble(dynamic value) {
@@ -276,61 +363,106 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return 0.0;
   }
 
-  String _getStatusMessage(String type, double value) {
-    switch (type) {
-      case 'temperature':
-        return value > 30
-            ? 'Panas'
-            : value < 20
-                ? 'Dingin'
-                : 'Optimal';
-      case 'humidity':
-        return value > 80
-            ? 'Lembab'
-            : value < 40
-                ? 'Kering'
-                : 'Normal';
-      case 'soilMoisture':
-        return value < 30
-            ? 'Kering'
-            : value > 70
-                ? 'Basah'
-                : 'Optimal';
-      case 'lightIntensity':
-        return value > 800
-            ? 'Terang'
-            : value < 300
-                ? 'Redup'
-                : 'Cukup';
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'panas':
+      case 'tinggi':
+      case 'kering':
+      case 'bahaya':
+      case 'suhu > max toleransi (panas)':
+      case 'rh tinggi':
+      case 'risiko jamur':
+      case 'sangat kering':
+      case 'sangat basah':
+        return Colors.orange;
+      case 'dingin':
+      case 'rendah':
+      case 'suhu < min toleransi (dingin)':
+      case 'rh rendah':
+        return Colors.blue;
+      case 'lembab':
+      case 'basah':
+        return Colors.blue;
+      case 'optimal':
+      case 'normal':
+      case 'baik':
+      case 'cukup':
+      case 'ideal':
+      case 'suhu siang ideal':
+      case 'suhu malam ideal':
+      case 'rh ideal':
+        return Colors.green;
+      case 'terang':
+        return Colors.amber;
+      case 'redup':
+      case 'remang':
+        return Colors.orange;
+      case 'gelap':
+        return Colors.grey;
       default:
-        return 'Normal';
+        return Colors.green;
     }
   }
 
-  Color _getStatusColor(String type, double value) {
+  String _getStatusDescription(String type, String status) {
     switch (type) {
-      case 'temperature':
-        return value > 30
-            ? Colors.orange
-            : value < 20
-                ? Colors.blue
-                : Colors.green;
-      case 'humidity':
-        return value > 80
-            ? Colors.orange
-            : value < 40
-                ? Colors.red
-                : Colors.green;
-      case 'soilMoisture':
-        return value < 30
-            ? Colors.red
-            : value > 70
-                ? Colors.blue
-                : Colors.green;
-      case 'lightIntensity':
-        return value < 300 ? Colors.orange : Colors.green;
+      case 'suhu':
+        switch (status.toLowerCase()) {
+          case 'panas':
+          case 'suhu > max toleransi (panas)':
+            return 'Suhu terlalu tinggi untuk tanaman tomat';
+          case 'dingin':
+          case 'suhu < min toleransi (dingin)':
+            return 'Suhu terlalu rendah untuk tanaman tomat';
+          case 'suhu siang ideal':
+            return 'Suhu optimal untuk siang hari';
+          case 'suhu malam ideal':
+            return 'Suhu optimal untuk malam hari';
+          default:
+            return 'Suhu optimal untuk pertumbuhan tomat';
+        }
+      case 'kelembaban_udara':
+        switch (status.toLowerCase()) {
+          case 'tinggi':
+          case 'rh tinggi':
+            return 'Kelembapan udara terlalu tinggi';
+          case 'rendah':
+          case 'rh rendah':
+            return 'Kelembapan udara terlalu rendah';
+          case 'risiko jamur':
+            return 'Kelembapan sangat tinggi, risiko jamur';
+          case 'rh ideal':
+            return 'Kelembapan udara optimal';
+          default:
+            return 'Kelembapan udara optimal';
+        }
+      case 'kelembaban_tanah':
+        switch (status.toLowerCase()) {
+          case 'sangat kering':
+          case 'kering':
+            return 'Tanah terlalu kering, butuh penyiraman';
+          case 'basah':
+          case 'sangat basah':
+            return 'Tanah terlalu basah, kurangi penyiraman';
+          case 'ideal':
+            return 'Kelembapan tanah optimal untuk tomat';
+          default:
+            return 'Kelembapan tanah optimal';
+        }
+      case 'kecerahan':
+        switch (status.toLowerCase()) {
+          case 'terang':
+            return 'Cahaya sangat terang untuk tanaman';
+          case 'redup':
+          case 'remang':
+            return 'Cahaya cukup untuk pertumbuhan';
+          case 'gelap':
+            return 'Cahaya terlalu redup untuk tanaman';
+          default:
+            return 'Intensitas cahaya optimal';
+        }
       default:
-        return Colors.green;
+        return 'Kondisi normal';
     }
   }
 
@@ -344,8 +476,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Widget _buildNotificationsSheet() {
-    final themeProvider = Provider.of<ThemeProvider>(context);
-
     return Container(
       height: MediaQuery.of(context).size.height * 0.8,
       decoration: BoxDecoration(
@@ -396,10 +526,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ),
           ),
           Expanded(
-            child: StreamBuilder<List<NotificationItem>>(
-              stream: _notificationsEnabled
-                  ? AdminNotificationService.getNotifications()
-                  : Stream.value([]),
+            child: StreamBuilder<List<AdminNotificationItem>>(
+              stream: AdminNotificationService.getNotifications().map(
+                (list) => list.map((item) => item as AdminNotificationItem).toList(),
+              ),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return Center(
@@ -408,15 +538,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     ),
                   );
                 }
-
+                
                 if (!snapshot.hasData || snapshot.data!.isEmpty) {
                   return Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(
-                          Icons.notifications_none,
-                          size: 60,
+                          Icons.notifications_none, 
+                          size: 60, 
                           color: Colors.grey,
                         ),
                         const SizedBox(height: 16),
@@ -430,7 +560,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     ),
                   );
                 }
-
+                
                 final notifications = snapshot.data!;
                 return ListView.builder(
                   itemCount: notifications.length,
@@ -447,89 +577,128 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  Widget _buildNotificationItem(NotificationItem notification) {
-    final themeProvider = Provider.of<ThemeProvider>(context);
-
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: notification.isRead
-            ? Colors.grey[50]
-            : _primaryColor.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: notification.isRead
-              ? Colors.grey.withOpacity(0.2)
-              : _primaryColor.withOpacity(0.3),
+  Widget _buildNotificationItem(AdminNotificationItem notification) {
+    return GestureDetector(
+      onTap: () {
+        if (!notification.isRead) {
+          AdminNotificationService.markAsRead(notification.id);
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: notification.isRead 
+              ? Colors.grey[50]
+              : _primaryColor.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: notification.isRead 
+                ? Colors.grey.withOpacity(0.2)
+                : _primaryColor.withOpacity(0.3),
+          ),
         ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: notification.typeColor.withOpacity(0.2),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              notification.typeIcon,
-              color: notification.typeColor,
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  notification.title,
-                  style: TextStyle(
-                    fontWeight: notification.isRead
-                        ? FontWeight.normal
-                        : FontWeight.bold,
-                    fontSize: 14,
-                    color: Colors.black87,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  notification.message,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.black54,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  notification.formattedTime,
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: Colors.grey,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (!notification.isRead)
+        child: Row(
+          children: [
             Container(
-              width: 8,
-              height: 8,
-              decoration: const BoxDecoration(
-                color: Colors.red,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: notification.typeColor.withOpacity(0.2),
                 shape: BoxShape.circle,
               ),
+              child: Icon(
+                notification.typeIcon,
+                color: notification.typeColor,
+                size: 20,
+              ),
             ),
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    notification.title,
+                    style: TextStyle(
+                      fontWeight: notification.isRead ? FontWeight.normal : FontWeight.bold,
+                      fontSize: 14,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    notification.message,
+                    style: TextStyle(
+                      fontSize: 12, 
+                      color: Colors.black54,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          'Sumber: ${_getSourceLabel(notification.source)}',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey,
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        notification.formattedTime,
+                        style: const TextStyle(
+                          fontSize: 10, 
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            if (!notification.isRead)
+              Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: Colors.red,
+                  shape: BoxShape.circle,
+                ),
+              ),
+          ],
+        ),
       ),
     );
+  }
+
+  String _getSourceLabel(String? source) {
+    switch (source) {
+      case 'current_data':
+        return 'Data Real-time';
+      case 'history_data':
+        return 'Data History';
+      case 'registration':
+        return 'Pendaftaran';
+      case 'user_activity':
+        return 'Aktivitas User';
+      case 'system':
+        return 'Sistem';
+      default:
+        return source ?? 'Sistem';
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final themeProvider = Provider.of<ThemeProvider>(context);
-
+    
     if (_isLoading) {
       return Scaffold(
         backgroundColor: Colors.white,
@@ -564,7 +733,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               Text(
                 'Memuat dashboard...',
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: 14, 
                   color: Colors.grey,
                 ),
               ),
@@ -579,11 +748,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       body: SafeArea(
         child: RefreshIndicator(
           onRefresh: () async {
+            if (!mounted) return;
+            
             setState(() {
               _isLoading = true;
             });
+            
             await Future.delayed(const Duration(seconds: 1));
-            _initializeDashboard();
+            
+            if (mounted) {
+              _loadStatistics();
+              _loadCriticalAlerts();
+              setState(() {
+                _isLoading = false;
+              });
+            }
           },
           color: _primaryColor,
           child: SingleChildScrollView(
@@ -600,9 +779,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 const SizedBox(height: 24),
                 _buildSystemStatus(),
                 const SizedBox(height: 24),
-                _buildRecentActivities(),
-                const SizedBox(height: 24),
-                _buildSystemAlerts(),
+                _buildCriticalAlertsSection(),
               ],
             ),
           ),
@@ -634,7 +811,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     style: TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
-                      color: _primaryColor,
+                      color: Colors.black,
                     ),
                   ),
                 ],
@@ -651,12 +828,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      Icons.notifications,
+                      Icons.notifications, 
                       color: _primaryColor,
                     ),
                   ),
                 ),
-                if (_unreadNotifications > 0 && _notificationsEnabled)
+                if (_unreadNotifications > 0)
                   Positioned(
                     right: 8,
                     top: 8,
@@ -671,9 +848,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         minHeight: 16,
                       ),
                       child: Text(
-                        _unreadNotifications > 9
-                            ? '9+'
-                            : _unreadNotifications.toString(),
+                        _unreadNotifications > 9 ? '9+' : _unreadNotifications.toString(),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 10,
@@ -695,30 +870,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             color: Colors.grey[600],
           ),
         ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: _primaryColor.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: _primaryColor.withOpacity(0.3)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.cloud_sync, color: _primaryColor, size: 16),
-              const SizedBox(width: 6),
-              Text(
-                'Terhubung ke Database',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: _primaryColor,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
       ],
     );
   }
@@ -727,13 +878,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          '📊 Statistik Sistem',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: _primaryColor,
-          ),
+        Row(
+          children: [
+            Icon(
+              Icons.power_settings_new,
+              color: _primaryColor,
+              size: 26,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Statistik Sistem',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.black,
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 16),
         GridView.count(
@@ -750,8 +911,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               value: '$_totalFarmers',
               unit: 'Orang',
               status: _totalFarmers > 0 ? 'Aktif' : 'Tidak Ada',
-              color: _blueColor,
-              statusColor: _totalFarmers > 0 ? _greenColor : Colors.grey,
+              color: const Color(0xFF1A237E),
+              statusColor: _totalFarmers > 0 ? Colors.green : Colors.grey,
             ),
             _buildStatCard(
               icon: Icons.agriculture,
@@ -769,8 +930,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               unit: 'Node',
               status: _activeNodes == _totalLands ? 'Optimal' : 'Perhatian',
               color: Colors.purple,
-              statusColor:
-                  _activeNodes == _totalLands ? _greenColor : Colors.orange,
+              statusColor: _activeNodes == _totalLands ? Colors.green : Colors.orange,
             ),
             _buildStatCard(
               icon: Icons.warning,
@@ -778,8 +938,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               value: '$_criticalAlerts',
               unit: 'Alert',
               status: _criticalAlerts > 0 ? 'Perhatian' : 'Aman',
-              color: _accentColor,
-              statusColor: _criticalAlerts > 0 ? _accentColor : _greenColor,
+              color: _lightColor,
+              statusColor: _criticalAlerts > 0 ? _lightColor : Colors.green,
             ),
           ],
         ),
@@ -898,13 +1058,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          '🌡️ Data Sensor Rata-rata',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: _primaryColor,
-          ),
+        Row(
+          children: [
+            Icon(
+              Icons.power_settings_new,
+              color: const Color.fromARGB(255, 45, 167, 49),
+              size: 26,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Data Sensor Real-time',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.black,
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 16),
         GridView.count(
@@ -918,49 +1088,50 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             _buildSensorCard(
               icon: Icons.thermostat,
               title: 'Suhu',
-              value:
-                  '${_overallSensorData['temperature']?.toStringAsFixed(1)}°C',
+              value: '${sensorData['suhu']?.toStringAsFixed(1)}°C',
               unit: 'Celcius',
-              status: _getStatusMessage(
-                  'temperature', _overallSensorData['temperature']),
-              color: _primaryColor,
+              status: sensorData['status_suhu']?.toString() ?? 'Normal',
+              color: const Color(0xFF006B5D),
               statusColor: _getStatusColor(
-                  'temperature', _overallSensorData['temperature']),
+                  sensorData['status_suhu']?.toString() ?? 'Normal'),
+              description: _getStatusDescription(
+                  'suhu', sensorData['status_suhu']?.toString() ?? 'Normal'),
             ),
             _buildSensorCard(
               icon: Icons.water_drop,
-              title: 'Kelembapan Udara',
-              value: '${_overallSensorData['humidity']?.toStringAsFixed(1)}%',
+              title: 'Kelembaban Udara',
+              value: '${sensorData['kelembaban_udara']?.toStringAsFixed(1)}%',
               unit: 'Persen',
-              status:
-                  _getStatusMessage('humidity', _overallSensorData['humidity']),
-              color: _secondaryColor,
-              statusColor:
-                  _getStatusColor('humidity', _overallSensorData['humidity']),
+              status: sensorData['status_kelembaban']?.toString() ?? 'Normal',
+              color: const Color(0xFFB8860B),
+              statusColor: _getStatusColor(
+                  sensorData['status_kelembaban']?.toString() ?? 'Normal'),
+              description: _getStatusDescription('kelembaban_udara',
+                  sensorData['status_kelembaban']?.toString() ?? 'Normal'),
             ),
             _buildSensorCard(
               icon: Icons.grass,
-              title: 'Kelembapan Tanah',
-              value:
-                  '${_overallSensorData['soilMoisture']?.toStringAsFixed(1)}%',
+              title: 'Kelembaban Tanah',
+              value: '${sensorData['kelembaban_tanah']?.toStringAsFixed(1)}%',
               unit: 'Persen',
-              status: _getStatusMessage(
-                  'soilMoisture', _overallSensorData['soilMoisture']),
-              color: _tertiaryColor,
+              status: sensorData['kategori_tanah']?.toString() ?? 'Normal',
+              color: const Color(0xFF558B2F),
               statusColor: _getStatusColor(
-                  'soilMoisture', _overallSensorData['soilMoisture']),
+                  sensorData['kategori_tanah']?.toString() ?? 'Normal'),
+              description: _getStatusDescription('kelembaban_tanah',
+                  sensorData['kategori_tanah']?.toString() ?? 'Normal'),
             ),
             _buildSensorCard(
               icon: Icons.light_mode,
               title: 'Intensitas Cahaya',
-              value:
-                  '${_overallSensorData['lightIntensity']?.toStringAsFixed(0)}',
+              value: '${sensorData['kecerahan']?.toStringAsFixed(0)}',
               unit: 'Lux',
-              status: _getStatusMessage(
-                  'lightIntensity', _overallSensorData['lightIntensity']),
-              color: Colors.amber,
+              status: sensorData['kategori_cahaya']?.toString() ?? 'Normal',
+              color: const Color(0xFFB71C1C),
               statusColor: _getStatusColor(
-                  'lightIntensity', _overallSensorData['lightIntensity']),
+                  sensorData['kategori_cahaya']?.toString() ?? 'Normal'),
+              description: _getStatusDescription('kecerahan',
+                  sensorData['kategori_cahaya']?.toString() ?? 'Normal'),
             ),
           ],
         ),
@@ -976,20 +1147,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     required String status,
     required Color color,
     required Color statusColor,
+    required String description,
   }) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: color,
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.1),
             blurRadius: 8,
-            offset: const Offset(0, 4),
+            offset: const Offset(0, 2),
           ),
         ],
-        border: Border.all(color: Colors.grey.withOpacity(0.1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1000,23 +1171,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.2),
+                  color: Colors.white.withOpacity(0.3),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(icon, color: color, size: 20),
+                child: Icon(icon, color: Colors.white, size: 20),
               ),
               const Spacer(),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Colors.grey[100],
+                  color: Colors.white.withOpacity(0.3),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   unit,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 10,
-                    color: Colors.grey[700]!,
+                    color: Colors.white,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -1026,10 +1197,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           const SizedBox(height: 8),
           Text(
             value,
-            style: TextStyle(
-              fontSize: 28,
+            style: const TextStyle(
+              fontSize: 20,
               fontWeight: FontWeight.bold,
-              color: Colors.black87,
+              color: Colors.white,
               height: 1.2,
             ),
           ),
@@ -1037,7 +1208,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             title,
             style: const TextStyle(
               fontSize: 14,
-              color: Colors.black87,
+              color: Colors.white,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -1045,7 +1216,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.2),
+              color: Colors.white.withOpacity(0.3),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
@@ -1054,17 +1225,17 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 Container(
                   width: 6,
                   height: 6,
-                  decoration: BoxDecoration(
-                    color: statusColor,
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
                     shape: BoxShape.circle,
                   ),
                 ),
                 const SizedBox(width: 6),
                 Text(
                   status,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 12,
-                    color: statusColor,
+                    color: Colors.white,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -1080,30 +1251,29 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFF1A237E),
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.1),
             blurRadius: 8,
-            offset: const Offset(0, 4),
+            offset: const Offset(0, 2),
           ),
         ],
-        border: Border.all(color: Colors.grey.withOpacity(0.1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.engineering, color: _blueColor),
+              const Icon(Icons.engineering, color: Colors.white),
               const SizedBox(width: 8),
-              Text(
+              const Text(
                 'Status Sistem',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: _blueColor,
+                  color: Colors.white,
                 ),
               ),
             ],
@@ -1114,30 +1284,62 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               _buildSystemItem(
                 icon: Icons.water_drop,
                 title: 'Pompa Air',
-                status: _systemStatus['pump'] ? 'ON' : 'OFF',
-                statusColor: _systemStatus['pump'] ? _greenColor : Colors.red,
-                mode: _systemStatus['autoMode'] ? 'Auto' : 'Manual',
+                status: actuatorData['pump'] ? 'ON' : 'OFF',
+                statusColor: actuatorData['pump'] ? Colors.green : Colors.red,
+                mode: actuatorData['autoMode'] ? 'Auto' : 'Manual',
+                iconColor: Colors.blue,
               ),
               const SizedBox(width: 12),
               _buildSystemItem(
                 icon: Icons.lightbulb,
                 title: 'Lampu Tumbuh',
-                status: _systemStatus['light'] ? 'ON' : 'OFF',
-                statusColor: _systemStatus['light'] ? _greenColor : Colors.red,
-                mode: _systemStatus['autoMode'] ? 'Auto' : 'Manual',
+                status: actuatorData['light'] ? 'ON' : 'OFF',
+                statusColor: actuatorData['light'] ? Colors.green : Colors.red,
+                mode: actuatorData['autoMode'] ? 'Auto' : 'Manual',
+                iconColor: Colors.yellow,
               ),
               const SizedBox(width: 12),
               _buildSystemItem(
-                icon: _systemStatus['autoMode']
+                icon: actuatorData['autoMode']
                     ? Icons.auto_mode
                     : Icons.engineering,
                 title: 'Mode Sistem',
-                status: _systemStatus['autoMode'] ? 'Auto' : 'Manual',
+                status: actuatorData['autoMode'] ? 'Auto' : 'Manual',
                 statusColor:
-                    _systemStatus['autoMode'] ? _blueColor : Colors.orange,
+                    actuatorData['autoMode'] ? Colors.blue : Colors.orange,
                 mode: 'Aktif',
+                iconColor: Colors.green,
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.info,
+                  color: Colors.white70,
+                  size: 16,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    actuatorData['autoMode']
+                        ? 'Sistem berjalan otomatis berdasarkan kondisi sensor'
+                        : 'Kontrol manual aktif - Anda dapat mengontrol di halaman Kontrol',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.white70,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1150,6 +1352,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     required String status,
     required Color statusColor,
     required String mode,
+    Color? iconColor,
   }) {
     return Expanded(
       child: Container(
@@ -1160,21 +1363,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.05),
-              blurRadius: 6,
-              offset: const Offset(0, 3),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
             ),
           ],
-          border: Border.all(color: Colors.grey.withOpacity(0.1)),
         ),
         child: Column(
           children: [
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: statusColor.withOpacity(0.2),
+                color: Colors.grey[200],
                 shape: BoxShape.circle,
               ),
-              child: Icon(icon, color: statusColor, size: 24),
+              child: Icon(icon,
+                  color: iconColor ?? Colors.grey[700],
+                  size: 24),
             ),
             const SizedBox(height: 8),
             Text(
@@ -1201,7 +1405,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               decoration: BoxDecoration(
                 color: Colors.grey[100],
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey.withOpacity(0.3)),
               ),
               child: Text(
                 mode,
@@ -1218,7 +1421,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  Widget _buildRecentActivities() {
+  Widget _buildCriticalAlertsSection() {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -1238,144 +1441,82 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         children: [
           Row(
             children: [
-              Icon(Icons.history, color: _tertiaryColor),
+              Icon(Icons.warning, color: _lightColor),
               const SizedBox(width: 8),
               Text(
-                'Aktivitas Terbaru',
+                'Alert Kritis',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: _tertiaryColor,
+                  color: _lightColor,
                 ),
               ),
+              const Spacer(),
+              if (_criticalAlertsList.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: _lightColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: _lightColor.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: _lightColor,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${_criticalAlertsList.length} Alert',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: _lightColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 16),
-          ..._recentActivities.map((activity) => _buildActivityItem(activity)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActivityItem(Map<String, dynamic> activity) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.withOpacity(0.1)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 3,
-            offset: const Offset(0, 1),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: activity['color'].withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(activity['icon'], color: activity['color'], size: 16),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  activity['user'],
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
-                ),
-                Text(
-                  activity['action'],
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.black87,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Text(
-            activity['time'],
-            style: const TextStyle(
-              fontSize: 10,
-              color: Colors.grey,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSystemAlerts() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
-        border: Border.all(color: Colors.grey.withOpacity(0.1)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.warning, color: _accentColor),
-              const SizedBox(width: 8),
-              Text(
-                'Alert Sistem',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: _accentColor,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _systemAlerts.isEmpty
+          _criticalAlertsList.isEmpty
               ? Padding(
                   padding: const EdgeInsets.all(16.0),
                   child: Column(
                     children: [
                       Icon(
-                        Icons.check_circle,
-                        size: 40,
+                        Icons.check_circle, 
+                        size: 40, 
                         color: _greenColor,
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Tidak ada alert sistem',
+                        'Tidak ada alert kritis',
                         style: TextStyle(
                           color: _greenColor,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Semua sistem berjalan normal',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
                         ),
                       ),
                     ],
                   ),
                 )
               : Column(
-                  children: _systemAlerts
-                      .take(3)
-                      .map((alert) => _buildAlertItem(alert))
-                      .toList(),
+                  children: _criticalAlertsList.map((alert) => 
+                    _buildAlertItem(alert)).toList(),
                 ),
         ],
       ),
@@ -1385,6 +1526,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Widget _buildAlertItem(Map<String, dynamic> alert) {
     final severity = alert['severity'];
     final color = _getSeverityColor(severity);
+    final timeAgo = _formatTimeAgo(alert['timestamp']);
+    final source = alert['source'] ?? 'system';
+    final alertType = alert['alertType'] ?? 'general';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -1394,22 +1538,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: color.withOpacity(0.3)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
                   alert['title'],
                   style: const TextStyle(
                     fontSize: 14,
@@ -1417,15 +1561,58 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     color: Colors.black87,
                   ),
                 ),
-                Text(
-                  alert['message'],
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.black54,
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  severity.toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: color,
                   ),
                 ),
-              ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            alert['message'],
+            style: const TextStyle(
+              fontSize: 12, 
+              color: Colors.black54,
             ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.grey.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  'Sumber: ${_getSourceLabel(source)}',
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: Colors.grey,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              Text(
+                timeAgo,
+                style: const TextStyle(
+                  fontSize: 10, 
+                  color: Colors.grey,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1434,14 +1621,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   Color _getSeverityColor(String severity) {
     switch (severity) {
-      case 'high':
-        return _accentColor;
-      case 'medium':
-        return Colors.orange;
-      case 'low':
-        return _blueColor;
-      default:
-        return Colors.grey;
+      case 'high': return _lightColor;
+      case 'medium': return Colors.orange;
+      case 'low': return const Color(0xFF1A237E);
+      default: return Colors.grey;
     }
   }
 }

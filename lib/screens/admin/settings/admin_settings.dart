@@ -216,7 +216,8 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor:
+            isDarkMode ? Theme.of(context).colorScheme.surface : Colors.white,
         title: Row(
           children: [
             Icon(Icons.agriculture, color: _primaryColor),
@@ -225,7 +226,9 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
               'Tentang TomaFarm',
               style: TextStyle(
                 fontWeight: FontWeight.bold,
-                color: Colors.black,
+                color: isDarkMode
+                    ? Theme.of(context).colorScheme.onSurface
+                    : Colors.black,
               ),
             ),
           ],
@@ -269,7 +272,12 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
                 'Dilengkapi dengan berbagai fitur canggih untuk memastikan tanaman tomat tumbuh optimal.',
                 style: TextStyle(
                   height: 1.5,
-                  color: Colors.black87,
+                  color: isDarkMode
+                      ? Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withOpacity(0.87)
+                      : Colors.black87,
                 ),
               ),
               const SizedBox(height: 16),
@@ -277,20 +285,27 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
                 '🎯 Fitur Utama:',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
-                  color: Colors.black,
+                  color: isDarkMode
+                      ? Theme.of(context).colorScheme.onSurface
+                      : Colors.black,
                 ),
               ),
               const SizedBox(height: 8),
-              _buildFeatureItem('📊 Monitoring real-time sensor'),
-              _buildFeatureItem('💧 Kontrol otomatis pompa air'),
-              _buildFeatureItem('💡 Kontrol lampu tumbuh'),
-              _buildFeatureItem('📈 Riwayat data dan grafik'),
-              _buildFeatureItem('🔔 Notifikasi cerdas'),
+              _buildFeatureItem(
+                  '📊 Monitoring real-time sensor', isDarkMode, context),
+              _buildFeatureItem(
+                  '💧 Kontrol otomatis pompa air', isDarkMode, context),
+              _buildFeatureItem('💡 Kontrol lampu tumbuh', isDarkMode, context),
+              _buildFeatureItem(
+                  '📈 Riwayat data dan grafik', isDarkMode, context),
+              _buildFeatureItem('🔔 Notifikasi cerdas', isDarkMode, context),
               const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
+                  color: isDarkMode
+                      ? Theme.of(context).colorScheme.surfaceVariant
+                      : Colors.grey.shade100,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Column(
@@ -301,13 +316,20 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
-                        color: Colors.black,
+                        color: isDarkMode
+                            ? Theme.of(context).colorScheme.onSurface
+                            : Colors.black,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'Versi: 1.0.0\nBuild: 2024.12.01\nDikembangkan untuk Project Based Learning',
-                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: isDarkMode
+                            ? Theme.of(context).colorScheme.onSurfaceVariant
+                            : Colors.grey,
+                      ),
                     ),
                   ],
                 ),
@@ -330,7 +352,7 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
     );
   }
 
-  Widget _buildFeatureItem(String text) {
+  Widget _buildFeatureItem(String text, bool isDarkMode, BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -342,7 +364,9 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
               text,
               style: TextStyle(
                 fontSize: 13,
-                color: Colors.black87,
+                color: isDarkMode
+                    ? Theme.of(context).colorScheme.onSurface.withOpacity(0.87)
+                    : Colors.black87,
               ),
             ),
           ),
@@ -500,12 +524,11 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final user = _auth.currentUser;
     final theme = Theme.of(context);
-    final isDarkMode = theme.brightness == Brightness.dark;
+    final user = _auth.currentUser;
 
     return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
+      backgroundColor: Colors.white,
       body: SafeArea(
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -549,7 +572,7 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
                                   _userName.isNotEmpty
                                       ? _userName
                                       : user?.email?.split('@').first ??
-                                          'Pengguna TomaFarm',
+                                          'Admin TomaFarm',
                                   style: const TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,
@@ -616,10 +639,10 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
               ),
               const SizedBox(height: 24),
 
-              // Settings List
+              // Settings List - Sama seperti farmer_settings
               Container(
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: theme.cardColor,
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: [
                     BoxShadow(
@@ -656,7 +679,7 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
                       trailing: Switch(
                         value: _notificationsEnabled,
                         onChanged: _toggleNotifications,
-                        activeThumbColor: _primaryColor,
+                        activeColor: _primaryColor,
                         activeTrackColor: _primaryColor.withOpacity(0.3),
                       ),
                     ),
@@ -674,7 +697,7 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
                               _showSnackBar(
                                   'Mode gelap ${value ? 'diaktifkan' : 'dinonaktifkan'}');
                             },
-                            activeThumbColor: _blueColor,
+                            activeColor: _blueColor,
                             activeTrackColor: _blueColor.withOpacity(0.3),
                           );
                         },
@@ -688,7 +711,7 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
                       trailing: Switch(
                         value: _autoRefreshEnabled,
                         onChanged: _toggleAutoRefresh,
-                        activeThumbColor: _secondaryColor,
+                        activeColor: _secondaryColor,
                         activeTrackColor: _secondaryColor.withOpacity(0.3),
                       ),
                     ),
@@ -730,7 +753,7 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
               ),
               const SizedBox(height: 24),
 
-              // Logout Button
+              // Logout Button - Sama seperti farmer_settings
               MouseRegion(
                 cursor: SystemMouseCursors.click,
                 child: GestureDetector(
@@ -781,6 +804,7 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
     required Widget trailing,
     VoidCallback? onTap,
   }) {
+    final theme = Theme.of(context);
     return ListTile(
       leading: Container(
         padding: const EdgeInsets.all(10),
@@ -795,14 +819,14 @@ class _SettingsScreenState extends State<AdminSettingsScreen> {
         style: TextStyle(
           fontSize: 16,
           fontWeight: FontWeight.w600,
-          color: Colors.black,
+          color: theme.colorScheme.onSurface,
         ),
       ),
       subtitle: Text(
         subtitle,
         style: TextStyle(
           fontSize: 13,
-          color: Colors.grey.shade600,
+          color: theme.colorScheme.onSurface.withOpacity(0.6),
         ),
       ),
       trailing: trailing,
