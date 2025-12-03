@@ -6,14 +6,37 @@ import 'package:intl/intl.dart';
 class AdminNotificationService {
   static final DatabaseReference _databaseRef = FirebaseDatabase.instance.ref();
 
-  static Stream<List<AdminNotificationItem>> getNotifications() {
+  // Warna konsisten
+  static const Color _primaryColor = Color(0xFF006B5D);
+  static const Color _secondaryColor = Color(0xFFB8860B);
+  static const Color _tertiaryColor = Color(0xFF558B2F);
+  static const Color _blueColor = Color(0xFF1A237E);
+  static const Color _greenColor = Color(0xFF2E7D32);
+  static const Color _accentColor = Color(0xFFB71C1C);
+
+  // Debug monitoring
+  static void startMonitoring() {
+    _databaseRef.child('notifications').onValue.listen((event) {
+      print('🎯 REAL-TIME UPDATE DETECTED');
+      final data = event.snapshot.value;
+      if (data != null) {
+        print('📊 Total notifications: ${(data as Map).length}');
+      }
+    });
+  }
+
+  static Stream<List<NotificationItem>> getNotifications() {
+    print('🔔 Starting notifications stream...');
+
     return _databaseRef
         .child('admin_notifications')
         .orderByChild('timestamp')
         .onValue
         .map((event) {
-      final List<AdminNotificationItem> notifications = [];
+      final List<NotificationItem> notifications = [];
       final data = event.snapshot.value as Map<dynamic, dynamic>?;
+
+      print('📨 Received ${data?.length ?? 0} notifications from Firebase');
 
       if (data != null) {
         data.forEach((key, value) {
@@ -24,17 +47,43 @@ class AdminNotificationService {
             timestamp: value['timestamp'] ?? 0,
             isRead: value['isRead'] == true,
             type: value['type']?.toString() ?? 'info',
-            nodeId: value['nodeId']?.toString(),
-            alertType: value['alertType']?.toString(),
-            source: value['source']?.toString() ?? 'system',
           ));
         });
       }
 
       // Sort by timestamp descending (newest first)
       notifications.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+      print('✅ Processed ${notifications.length} notifications');
       return notifications;
     });
+  }
+
+  static int _parseTimestamp(dynamic timestamp) {
+    if (timestamp == null) {
+      return DateTime.now().millisecondsSinceEpoch;
+    }
+
+    int ts = 0;
+
+    if (timestamp is int) {
+      ts = timestamp;
+    } else if (timestamp is String) {
+      ts = int.tryParse(timestamp) ?? 0;
+    }
+
+    // ---- BLOKIR VALUE INVALID ----
+    if (ts <= 0) {
+      print('⚠ TIMESTAMP INVALID DETECTED → forced current time');
+      return DateTime.now().millisecondsSinceEpoch;
+    }
+
+    // ---- convert seconds → milliseconds ----
+    if (ts < 100000000000) {
+      ts *= 1000;
+    }
+
+    return ts;
   }
 
   static Future<void> markAsRead(String notificationId) async {
@@ -52,6 +101,7 @@ class AdminNotificationService {
       for (var key in data.keys) {
         await _databaseRef.child('admin_notifications/$key/isRead').set(true);
       }
+      print('✅ Marked all ${data.length} notifications as read');
     }
   }
 
@@ -69,6 +119,7 @@ class AdminNotificationService {
       });
     }
 
+    print('📊 Unread count: $count');
     return count;
   }
 
@@ -77,298 +128,100 @@ class AdminNotificationService {
       String title, String message, String type,
       {String? source, String? nodeId, String? alertType}) async {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    await _databaseRef.child('admin_notifications').push().set({
+    final newRef = _databaseRef.child('admin_notifications').push();
+
+    await newRef.set({
       'title': title,
       'message': message,
       'timestamp': timestamp,
+      'createdAt': DateTime.now().toIso8601String(), // Tambahkan createdAt
       'isRead': false,
       'type': type,
-      'source': source ?? 'system',
+    });
+  }
+
+  // Method khusus untuk notifikasi sistem admin
+  static Future<void> createSystemAlert(
+      String nodeId, String alertType, String message) async {
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    await _databaseRef.child('admin_notifications').push().set({
+      'title': 'Alert Sistem - $alertType',
+      'message': 'Node $nodeId: $message',
+      'timestamp': timestamp,
+      'isRead': false,
+      'type': 'warning',
       'nodeId': nodeId,
-      'alertType': alertType,
     });
+
+    print('🔔 System alert created: $title (Key: ${newRef.key})');
   }
 
-  // ========== ALERT HANYA DARI CURRENT_DATA DAN HISTORY_DATA ==========
+  // Method untuk notifikasi penyiraman
+  static Future<void> createWateringNotification(
+      bool isWatering, double soilMoisture, String plantStage) async {
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
 
-  // Method khusus untuk alert dari current_data (realtime)
-  static Future<void> createRealtimeAlert(
-      Map<String, dynamic> sensorData) async {
-    final suhu = sensorData['suhu'];
-    final statusSuhu = sensorData['status_suhu']?.toString() ?? 'Normal';
-    final kelembabanUdara = sensorData['kelembaban_udara'];
-    final statusKelembaban = sensorData['status_kelembaban']?.toString() ?? 'Normal';
-    final kelembabanTanah = sensorData['kelembaban_tanah'];
-    final kategoriTanah = sensorData['kategori_tanah']?.toString() ?? 'Normal';
-    final kecerahan = sensorData['kecerahan'];
-    final kategoriCahaya = sensorData['kategori_cahaya']?.toString() ?? 'Normal';
+    String title =
+        isWatering ? '🚰 Penyiraman Dimulai' : '✅ Penyiraman Selesai';
+    String type = isWatering ? 'info' : 'success';
 
-    // Hanya buat notifikasi jika ada kondisi KRITIS
-    if (statusSuhu.contains('panas') || statusSuhu.contains('bahaya')) {
-      await createAutoNotification(
-        '🔥 Alert Suhu - Real-time',
-        'Suhu mencapai ${suhu?.toStringAsFixed(1)}°C - Status: $statusSuhu',
-        'error',
-        source: 'current_data',
-        alertType: 'temperature',
-      );
-    }
+    String message = isWatering
+        ? 'Pompa menyala untuk menyiram tanaman tomat\nKelembaban tanah: ${soilMoisture.toStringAsFixed(1)}%\nTahapan: $plantStage'
+        : 'Penyiraman selesai\nKelembaban tanah: ${soilMoisture.toStringAsFixed(1)}%\nTahapan: $plantStage';
 
-    if (statusKelembaban.contains('tinggi') && kelembabanUdara >= 80) {
-      await createAutoNotification(
-        '💨 Alert Kelembaban Udara - Real-time',
-        'Kelembaban Udara: ${kelembabanUdara?.toStringAsFixed(1)}% - Status: $statusKelembaban',
-        'warning',
-        source: 'current_data',
-        alertType: 'humidity',
-      );
-    }
-
-    // Hanya untuk tanah SANGAT KERING atau SANGAT BASAH
-    if (kategoriTanah.contains('SANGAT KERING') || 
-        kategoriTanah.contains('SANGAT BASAH')) {
-      await createAutoNotification(
-        '💧 Alert Kelembaban Tanah - Real-time',
-        'Kelembaban Tanah: ${kelembabanTanah?.toStringAsFixed(1)}% - Kategori: $kategoriTanah',
-        'error',
-        source: 'current_data',
-        alertType: 'soil_moisture',
-      );
-    }
-
-    // Hanya untuk cahaya GELAP atau SANGAT TERANG
-    if (kategoriCahaya.contains('GELAP') || 
-        kategoriCahaya.contains('SANGAT TERANG')) {
-      await createAutoNotification(
-        '💡 Alert Intensitas Cahaya - Real-time',
-        'Kecerahan: ${kecerahan?.toStringAsFixed(0)} - Kategori: $kategoriCahaya',
-        'warning',
-        source: 'current_data',
-        alertType: 'light',
-      );
-    }
-  }
-
-  // Method untuk alert dari history_data (hanya kondisi kritis)
-  static Future<void> createHistoryAlert(
-      Map<String, dynamic> historyData, String key) async {
-    final kategoriTanah = historyData['kategori_tanah']?.toString();
-    
-    // Hanya buat notifikasi untuk kondisi tanah KRITIS dari history
-    if (kategoriTanah != null && 
-        (kategoriTanah.contains('SANGAT KERING') || 
-         kategoriTanah.contains('SANGAT BASAH'))) {
-      
-      final kelembabanTanah = historyData['kelembaban_tanah'];
-      final datetime = historyData['datetime']?.toString() ?? key;
-      
-      // Cek apakah sudah ada notifikasi serupa dalam 10 menit terakhir
-      final tenMinutesAgo = DateTime.now().subtract(Duration(minutes: 10)).millisecondsSinceEpoch;
-      final recentNotifications = await _getRecentAlerts('soil_moisture_history', tenMinutesAgo);
-      
-      if (recentNotifications.isEmpty) {
-        await createAutoNotification(
-          '📊 Alert History - Kelembaban Tanah',
-          'Data history: Tanah $kategoriTanah (${kelembabanTanah?.toStringAsFixed(1)}%) pada $datetime',
-          'error',
-          source: 'history_data',
-          alertType: 'soil_moisture_history',
-        );
-      }
-    }
-  }
-
-  // Helper untuk mendapatkan alert terbaru
-  static Future<List<Map<String, dynamic>>> _getRecentAlerts(String alertType, int sinceTimestamp) async {
-    final snapshot = await _databaseRef
-        .child('admin_notifications')
-        .orderByChild('timestamp')
-        .startAt(sinceTimestamp)
-        .once();
-    
-    final data = snapshot.snapshot.value as Map<dynamic, dynamic>?;
-    final List<Map<String, dynamic>> alerts = [];
-    
-    if (data != null) {
-      data.forEach((key, value) {
-        if (value['alertType'] == alertType && value['isRead'] != true) {
-          alerts.add({
-            'id': key.toString(),
-            'timestamp': value['timestamp'],
-            'message': value['message'],
-          });
-        }
-      });
-    }
-    
-    return alerts;
-  }
-
-  // ========== NOTIFIKASI PENDAFTARAN USER ==========
-
-  // Method untuk notifikasi pendaftaran petani baru
-  static Future<void> notifyNewFarmerRegistration(
-      String farmerName, String farmerEmail, String farmerId) async {
-    await createAutoNotification(
-      '👤 Pendaftaran Petani Baru',
-      '$farmerName ($farmerEmail) telah mendaftar sebagai petani di TomaFarm',
-      'success',
-      source: 'registration',
-      alertType: 'new_farmer',
-    );
-  }
-
-  // Method untuk notifikasi aktivitas user lainnya
-  static Future<void> createUserActivityNotification(
-      String userName, String action, String details) async {
-    String title = '';
-    String type = 'info';
-    
-    switch (action) {
-      case 'login':
-        title = '🔑 User Login';
-        type = 'info';
-        break;
-      case 'logout':
-        title = '🚪 User Logout';
-        type = 'info';
-        break;
-      case 'profile_update':
-        title = '✏️ Update Profil';
-        type = 'info';
-        break;
-      case 'password_change':
-        title = '🔐 Ganti Password';
-        type = 'warning';
-        break;
-    }
-    
-    await createAutoNotification(
-      title,
-      '$userName telah $action. $details',
-      type,
-      source: 'user_activity',
-      alertType: action,
-    );
-  }
-
-  // ========== NOTIFIKASI SISTEM LAINNYA ==========
-
-  // Notifikasi maintenance sistem
-  static Future<void> createSystemMaintenanceNotification(
-      String component, String status) async {
-    await createAutoNotification(
-      '🔧 Maintenance Sistem',
-      'Komponen $component dalam status: $status',
-      'info',
-      source: 'system',
-      alertType: 'maintenance',
-    );
-  }
-
-  // Notifikasi backup data
-  static Future<void> createDataBackupNotification(
-      String backupType, bool success) async {
-    await createAutoNotification(
-      '💾 Backup Data',
-      'Backup $backupType ${success ? 'berhasil' : 'gagal'}',
-      success ? 'success' : 'error',
-      source: 'system',
-      alertType: 'backup',
-    );
-  }
-
-  // ========== SETUP LISTENERS ==========
-
-  // Setup listener untuk current_data (realtime alerts)
-  static void setupRealtimeDataListener() {
-    final DatabaseReference databaseRef = FirebaseDatabase.instance.ref();
-    
-    databaseRef.child('current_data').onValue.listen((event) {
-      final data = event.snapshot.value;
-      if (data != null && data is Map) {
-        final Map<String, dynamic> sensorData = {
-          'suhu': _parseDouble(data['suhu']),
-          'status_suhu': data['status_suhu']?.toString() ?? 'Normal',
-          'kelembaban_udara': _parseDouble(data['kelembaban_udara']),
-          'status_kelembaban': data['status_kelembaban']?.toString() ?? 'Normal',
-          'kelembaban_tanah': _parseDouble(data['kelembaban_tanah']),
-          'kategori_tanah': data['kategori_tanah']?.toString() ?? 'Normal',
-          'kecerahan': _parseDouble(data['kecerahan']),
-          'kategori_cahaya': data['kategori_cahaya']?.toString() ?? 'Normal',
-        };
-        
-        createRealtimeAlert(sensorData);
-      }
+    final newRef = _databaseRef.child('admin_notifications').push();
+    await newRef.set({
+      'title': title,
+      'message': message,
+      'timestamp': timestamp,
+      'createdAt': DateTime.now().toIso8601String(),
+      'isRead': false,
+      'type': type,
     });
+
+    print('🔔 Watering notification created: $title');
   }
 
-  // Setup listener untuk history_data
-  static void setupHistoryDataListener() {
-    final DatabaseReference databaseRef = FirebaseDatabase.instance.ref();
-    
-    databaseRef.child('history_data')
-      .limitToLast(20) // Hanya data terakhir
-      .onChildAdded
-      .listen((DatabaseEvent event) {
-        final data = event.snapshot.value as Map<dynamic, dynamic>?;
-        if (data != null) {
-          final Map<String, dynamic> historyData = data.cast<String, dynamic>();
-          createHistoryAlert(historyData, event.snapshot.key ?? '');
-        }
-      });
-  }
-
-  // Setup listener untuk pendaftaran user baru
-  static void setupUserRegistrationListener() {
-    final DatabaseReference databaseRef = FirebaseDatabase.instance.ref();
-    
-    databaseRef.child('users')
-      .orderByChild('createdAt')
-      .limitToLast(10)
-      .onChildAdded
-      .listen((DatabaseEvent event) {
-        final newUser = event.snapshot.value as Map<dynamic, dynamic>?;
-        if (newUser != null) {
-          final role = newUser['role']?.toString() ?? '';
-          final name = newUser['name']?.toString() ?? 'User Baru';
-          final email = newUser['email']?.toString() ?? '';
-          final userId = event.snapshot.key ?? '';
-          
-          // Hanya kirim notifikasi untuk petani baru
-          if (role == 'farmer') {
-            notifyNewFarmerRegistration(name, email, userId);
-          }
-        }
-      });
-  }
-
-  // Helper function untuk parse double
-  static double _parseDouble(dynamic value) {
-    if (value == null) return 0.0;
-    if (value is double) return value;
-    if (value is int) return value.toDouble();
-    if (value is String) return double.tryParse(value) ?? 0.0;
-    return 0.0;
+  // Method untuk notifikasi user management
+  static Future<void> createUserNotification(
+      String action, String userName) async {
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    await _databaseRef.child('admin_notifications').push().set({
+      'title': 'Manajemen User',
+      'message': 'User $userName telah $action',
+      'timestamp': timestamp,
+      'isRead': false,
+      'type': 'info',
+    });
   }
 }
 
-class AdminNotificationItem {
+class NotificationItem {
   final String id;
   final String title;
   final String message;
   final int timestamp;
+  final String? createdAt; // Tambahkan field untuk createdAt
   final bool isRead;
   final String type;
   final String? nodeId;
   final String? alertType;
   final String? source;
 
-  AdminNotificationItem({
+  // Warna konsisten dengan aplikasi
+  static const Color _primaryColor = Color(0xFF006B5D);
+  static const Color _secondaryColor = Color(0xFFB8860B);
+  static const Color _tertiaryColor = Color(0xFF558B2F);
+  static const Color _blueColor = Color(0xFF1A237E);
+  static const Color _greenColor = Color(0xFF2E7D32);
+  static const Color _accentColor = Color(0xFFB71C1C);
+
+  NotificationItem({
     required this.id,
     required this.title,
     required this.message,
     required this.timestamp,
+    this.createdAt,
     required this.isRead,
     required this.type,
     this.nodeId,
@@ -376,30 +229,50 @@ class AdminNotificationItem {
     this.source,
   });
 
+  // PERBAIKAN: Gunakan createdAt jika ada, jika tidak gunakan timestamp
+  DateTime get dateTime {
+    if (createdAt != null) {
+      try {
+        return DateTime.parse(createdAt!);
+      } catch (e) {
+        return DateTime.fromMillisecondsSinceEpoch(timestamp);
+      }
+    }
+    return DateTime.fromMillisecondsSinceEpoch(timestamp);
+  }
+
   String get formattedTime {
-    final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
     final now = DateTime.now();
-    final difference = now.difference(date);
+    final difference = now.difference(dateTime);
 
     if (difference.inMinutes < 1) return 'Baru saja';
     if (difference.inHours < 1) return '${difference.inMinutes}m yang lalu';
     if (difference.inDays < 1) return '${difference.inHours}j yang lalu';
     if (difference.inDays < 7) return '${difference.inDays}h yang lalu';
 
-    return DateFormat('dd/MM/yyyy').format(date);
+    return DateFormat('dd/MM/yyyy HH:mm').format(dateTime);
+  }
+
+  String get fullFormattedTime {
+    return DateFormat('yyyy-MM-dd HH:mm:ss').format(dateTime);
+  }
+
+  // Tambahkan getter untuk tanggal yang diformat seperti contoh
+  String get systemFormattedDate {
+    return DateFormat('yyyy-MM-dd HH:mm:ss').format(dateTime);
   }
 
   Color get typeColor {
     switch (type) {
       case 'warning':
-        return Colors.orange;
+        return _secondaryColor;
       case 'error':
-        return Colors.red;
+        return _accentColor;
       case 'success':
-        return Colors.green;
+        return _tertiaryColor;
       case 'info':
       default:
-        return Colors.blue;
+        return _primaryColor;
     }
   }
 
@@ -415,5 +288,10 @@ class AdminNotificationItem {
       default:
         return Icons.info;
     }
+  }
+
+  @override
+  String toString() {
+    return 'NotificationItem{id: $id, title: $title, date: ${dateTime.toString()}, isRead: $isRead}';
   }
 }
