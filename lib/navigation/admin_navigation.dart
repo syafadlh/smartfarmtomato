@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../screens/admin/dashboard/admin_dashboard.dart';
 import '../screens/admin/settings/admin_settings.dart';
-import '../screens/admin/pump control/admin_controls.dart'; // TAMBAHKAN INI
 import '../screens/admin/Farmer Management/admin_farmers.dart';
 import '../screens/admin/lands/admin_lands.dart';
 import '../providers/theme_provider.dart';
@@ -23,8 +22,7 @@ class _AdminNavigationState extends State<AdminNavigation> {
     const AdminDashboardScreen(),
     const AdminFarmersScreen(),
     const AdminLandsScreen(),
-    const AdminControlsScreen(),
-    const AdminSettingsScreen(),
+    const AdminSettingsScreen(), // Pindah ke index 3
   ];
 
   @override
@@ -60,10 +58,6 @@ class _AdminNavigationState extends State<AdminNavigation> {
           BottomNavigationBarItem(
             icon: Icon(Icons.agriculture),
             label: 'Lahan',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.control_camera),
-            label: 'Kontrol',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.settings),
