@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../app_user.dart';
 import 'signup_screen.dart';
+import 'forgot_password_screen.dart'; // TAMBAH IMPORT INI
 import '../navigation/farmer_navigation.dart';
 import '../navigation/admin_navigation.dart';
 
@@ -19,10 +20,14 @@ class _SignInScreenState extends State<SignInScreen> {
 
   bool loading = false;
   bool hidePass = true;
+  bool rememberMe = false;
 
   // ================= LOGIN FUNCTION BACKEND =================
   Future<void> _login() async {
-    if (!_form.currentState!.validate()) return;
+    if (!_form.currentState!.validate()) {
+      // Field kosong akan ditangani oleh validator
+      return;
+    }
 
     setState(() => loading = true);
 
@@ -37,13 +42,23 @@ class _SignInScreenState extends State<SignInScreen> {
         final userData = await AppUser.getUserRole(cred.user!.uid);
 
         if (mounted) {
+          // Pesan sukses untuk Login Valid
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text("Login berhasil"),
               backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
             ),
           );
 
+          // Simpan remember me preference jika diperlukan
+          if (rememberMe) {
+            // Anda bisa menambahkan SharedPreferences di sini
+            // await SharedPreferences.getInstance()
+            //     .setBool('rememberMe', true);
+          }
+
+          // Akses ke Dashboard sesuai role
           Navigator.pushAndRemoveUntil(
             context,
             MaterialPageRoute(
@@ -57,27 +72,41 @@ class _SignInScreenState extends State<SignInScreen> {
       }
     } on FirebaseAuthException catch (e) {
       String msg = "Terjadi kesalahan";
+      
+      // Sesuaikan pesan error sesuai test case
       switch (e.code) {
         case "user-not-found":
-          msg = "Email tidak ditemukan";
+          msg = "Email tidak ditemukan"; // Untuk Email Tidak Terdaftar
           break;
         case "wrong-password":
-          msg = "Password salah";
+          msg = "Password salah. Coba lagi."; // Untuk Password Salah
           break;
         case "invalid-email":
           msg = "Format email salah";
           break;
+        case "invalid-credential":
+          msg = "Email atau password salah";
+          break;
         case "network-request-failed":
-          msg = "Koneksi bermasalah";
+          msg = "Koneksi bermasalah. Periksa jaringan Anda.";
           break;
         case "too-many-requests":
-          msg = "Terlalu banyak percobaan";
+          msg = "Terlalu banyak percobaan. Coba lagi nanti.";
           break;
+        case "user-disabled":
+          msg = "Akun dinonaktifkan. Hubungi administrator.";
+          break;
+        default:
+          msg = "Login gagal: ${e.message}";
       }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(msg), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(msg),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
         );
       }
     } finally {
@@ -147,9 +176,15 @@ class _SignInScreenState extends State<SignInScreen> {
                   controller: _email,
                   decoration:
                       _inputDecoration("Email Address", Icons.email_outlined),
-                  validator: (v) => v == null || !v.contains("@")
-                      ? "Email tidak valid"
-                      : null,
+                  validator: (v) {
+                    if (v == null || v.isEmpty) {
+                      return "Email tidak boleh kosong"; // Field Kosong
+                    }
+                    if (!v.contains("@") || !v.contains(".")) {
+                      return "Email tidak valid";
+                    }
+                    return null;
+                  },
                 ),
 
                 const SizedBox(height: 16),
@@ -165,13 +200,61 @@ class _SignInScreenState extends State<SignInScreen> {
                       icon: Icon(
                           hidePass ? Icons.visibility_off : Icons.visibility),
                       onPressed: () => setState(() => hidePass = !hidePass),
+                      tooltip: hidePass ? "Show Password" : "Hide Password",
                     ),
                   ),
-                  validator: (v) =>
-                      v == null || v.length < 6 ? "Minimal 6 karakter" : null,
+                  validator: (v) {
+                    if (v == null || v.isEmpty) {
+                      return "Password tidak boleh kosong"; // Field Kosong
+                    }
+                    if (v.length < 6) {
+                      return "Minimal 6 karakter";
+                    }
+                    return null;
+                  },
                 ),
 
-                const SizedBox(height: 28),
+                const SizedBox(height: 10),
+
+                // ✅ Remember Me Checkbox
+                Row(
+                  children: [
+                    Checkbox(
+                      value: rememberMe,
+                      onChanged: (value) {
+                        setState(() {
+                          rememberMe = value ?? false;
+                        });
+                      },
+                      activeColor: Colors.red.shade800,
+                    ),
+                    const Text(
+                      "Remember Me",
+                      style: TextStyle(fontSize: 14),
+                    ),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: () {
+                        // Navigate ke Forgot Password Screen
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const ForgotPasswordScreen(),
+                          ),
+                        );
+                      },
+                      child: const Text(
+                        "Lupa Password?",
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 18),
 
                 // 🔥 Login Button
                 SizedBox(
@@ -249,6 +332,14 @@ class _SignInScreenState extends State<SignInScreen> {
         borderSide: const BorderSide(color: Colors.black26),
       ),
       focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(30),
+        borderSide: const BorderSide(color: Colors.red, width: 2),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(30),
+        borderSide: const BorderSide(color: Colors.red),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(30),
         borderSide: const BorderSide(color: Colors.red, width: 2),
       ),

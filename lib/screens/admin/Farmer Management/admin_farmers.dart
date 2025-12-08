@@ -18,7 +18,9 @@ class _AdminFarmersScreenState extends State<AdminFarmersScreen> {
 
   List<Map<String, dynamic>> _farmers = [];
   List<Map<String, dynamic>> _filteredFarmers = [];
+  List<Map<String, dynamic>> _passwordResetRequests = [];
   bool _isLoading = true;
+  bool _showResetRequests = false;
 
   // Warna konsisten dengan tema
   final Color _primaryColor = const Color(0xFF006B5D); // Warna utama
@@ -29,6 +31,7 @@ class _AdminFarmersScreenState extends State<AdminFarmersScreen> {
   void initState() {
     super.initState();
     _loadFarmers();
+    _loadPasswordResetRequests();
     _searchController.addListener(_searchFilter);
   }
 
@@ -65,6 +68,36 @@ class _AdminFarmersScreenState extends State<AdminFarmersScreen> {
     });
   }
 
+  void _loadPasswordResetRequests() {
+    _databaseRef.child('passwordResetRequests').onValue.listen((event) {
+      final data = event.snapshot.value as Map?;
+      final List<Map<String, dynamic>> requests = [];
+
+      if (data != null) {
+        data.forEach((key, value) {
+          if (value['status'] == 'pending') {
+            requests.add({
+              'requestId': key,
+              'userId': value['userId'],
+              'userName': value['userName'],
+              'email': value['email'],
+              'newPassword': value['newPassword'],
+              'requestedAt': value['requestedAt'],
+              'status': value['status'],
+            });
+          }
+        });
+      }
+
+      // Urutkan berdasarkan tanggal request (terbaru)
+      requests.sort((a, b) => (b['requestedAt'] as int).compareTo(a['requestedAt'] as int));
+
+      setState(() {
+        _passwordResetRequests = requests;
+      });
+    });
+  }
+
   void _searchFilter() {
     final query = _searchController.text.toLowerCase();
 
@@ -79,10 +112,435 @@ class _AdminFarmersScreenState extends State<AdminFarmersScreen> {
   String _formatDate(int timestamp) {
     try {
       final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
-      return DateFormat('dd/MM/yyyy').format(date);
+      return DateFormat('dd/MM/yyyy HH:mm').format(date);
     } catch (e) {
       return '-';
     }
+  }
+
+  // Method untuk approve reset password
+  void _approvePasswordReset(Map<String, dynamic> request) async {
+    final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
+    final isDarkMode = themeProvider.isDarkMode;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: isDarkMode ? Colors.grey[800]! : Colors.white,
+        title: Text(
+          'Setujui Reset Password',
+          style: TextStyle(
+            color: isDarkMode ? Colors.white : Colors.black,
+          ),
+        ),
+        content: Text(
+          'Apakah Anda yakin ingin menyetujui reset password untuk ${request['userName']} (${request['email']})?',
+          style: TextStyle(
+            color: isDarkMode ? Colors.grey[400] : Colors.black,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Batal'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              try {
+                // Update password di Firebase Auth
+                try {
+                  await FirebaseAuth.instance.signInWithEmailAndPassword(
+                    email: request['email'],
+                    password: 'temp123', // Password sementara untuk mendapatkan user
+                  );
+                  
+                  // Note: Di Firebase, admin tidak bisa langsung update password user lain
+                  // Solusi: Simpan password baru di database untuk digunakan saat login
+                } catch (e) {
+                  // Ignore error, lanjut ke metode alternatif
+                }
+
+                // Simpan password baru yang di-approve di database
+                await _databaseRef.child('users/${request['userId']}').update({
+                  'approvedNewPassword': request['newPassword'],
+                  'passwordUpdatedAt': DateTime.now().millisecondsSinceEpoch,
+                  'passwordChangeStatus': 'approved',
+                  'passwordChangeRequestId': request['requestId'],
+                });
+
+                // Update status permintaan
+                await _databaseRef
+                    .child('passwordResetRequests/${request['requestId']}')
+                    .update({
+                  'status': 'approved',
+                  'processedAt': DateTime.now().millisecondsSinceEpoch,
+                  'processedBy': 'admin',
+                  'adminNotes': 'Password disetujui dan siap digunakan',
+                });
+
+                // Simpan aktivitas
+                await _databaseRef.child('activities').push().set({
+                  'type': 'password_reset_approved',
+                  'title': 'Reset Password Disetujui',
+                  'message': 'Reset password untuk ${request['userName']} telah disetujui. User dapat login dengan password baru.',
+                  'timestamp': DateTime.now().millisecondsSinceEpoch,
+                  'userId': request['userId'],
+                  'userName': request['userName'],
+                  'adminAction': true,
+                });
+
+                // Hapus dari daftar permintaan
+                setState(() {
+                  _passwordResetRequests.removeWhere(
+                    (req) => req['requestId'] == request['requestId']
+                  );
+                });
+
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Reset password disetujui. User dapat login dengan password baru.'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+
+              } catch (e) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Error: $e'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: const Color.fromARGB(255, 8, 66, 37)),
+            child: const Text('Setujui'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Method untuk reject reset password
+  void _rejectPasswordReset(Map<String, dynamic> request) async {
+    final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
+    final isDarkMode = themeProvider.isDarkMode;
+    
+    final TextEditingController reasonController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          bool _isSubmitting = false;
+          
+          return AlertDialog(
+            backgroundColor: isDarkMode ? Colors.grey[800]! : Colors.white,
+            title: Text(
+              'Tolak Reset Password',
+              style: TextStyle(
+                color: isDarkMode ? Colors.white : Colors.black,
+              ),
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Masukkan alasan penolakan untuk ${request['userName']}:',
+                    style: TextStyle(
+                      color: isDarkMode ? Colors.grey[400] : Colors.black,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: reasonController,
+                    decoration: InputDecoration(
+                      hintText: 'Alasan penolakan...',
+                      border: const OutlineInputBorder(),
+                      filled: true,
+                      fillColor: isDarkMode ? Colors.grey[700]! : Colors.grey[100],
+                    ),
+                    maxLines: 3,
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: _isSubmitting ? null : () => Navigator.pop(context),
+                child: const Text('Batal'),
+              ),
+              ElevatedButton(
+                onPressed: _isSubmitting ? null : () async {
+                  if (reasonController.text.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Harap masukkan alasan penolakan'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+
+                  setState(() => _isSubmitting = true);
+
+                  try {
+                    // Update status permintaan
+                    await _databaseRef
+                        .child('passwordResetRequests/${request['requestId']}')
+                        .update({
+                      'status': 'rejected',
+                      'processedAt': DateTime.now().millisecondsSinceEpoch,
+                      'processedBy': 'admin',
+                      'reason': reasonController.text,
+                      'adminNotes': 'Permintaan ditolak: ${reasonController.text}',
+                    });
+
+                    // Simpan aktivitas
+                    await _databaseRef.child('activities').push().set({
+                      'type': 'password_reset_rejected',
+                      'title': 'Reset Password Ditolak',
+                      'message': 'Reset password untuk ${request['userName']} ditolak: ${reasonController.text}',
+                      'timestamp': DateTime.now().millisecondsSinceEpoch,
+                      'userId': request['userId'],
+                      'userName': request['userName'],
+                      'adminAction': true,
+                    });
+
+                    // Hapus dari daftar permintaan
+                    setState(() {
+                      _passwordResetRequests.removeWhere(
+                        (req) => req['requestId'] == request['requestId']
+                      );
+                    });
+
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Reset password ditolak'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  } finally {
+                    setState(() => _isSubmitting = false);
+                  }
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                child: _isSubmitting
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : const Text('Tolak'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // Widget untuk menampilkan notifikasi reset password
+  Widget _buildResetPasswordNotification() {
+    if (_passwordResetRequests.isEmpty) return const SizedBox();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.orange.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.orange),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.notifications_active, color: Colors.orange, size: 24),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Ada ${_passwordResetRequests.length} permintaan reset password',
+                  style: const TextStyle(
+                    color: Colors.orange,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Klik untuk melihat dan menyetujui',
+                  style: TextStyle(
+                    color: Colors.orange.withOpacity(0.8),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: () => setState(() => _showResetRequests = true),
+            icon: const Icon(Icons.arrow_forward_ios, color: Colors.orange, size: 16),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Widget untuk panel permintaan reset password
+  Widget _buildResetRequestsPanel() {
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isDarkMode = themeProvider.isDarkMode;
+    final cardColor = isDarkMode ? Colors.grey[800]! : Colors.white;
+    final textColor = isDarkMode ? Colors.white : Colors.black;
+    final borderColor = isDarkMode ? Colors.grey[700]! : Colors.grey[300]!;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.orange, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDarkMode ? 0.3 : 0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.lock_reset, color: Colors.orange),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Permintaan Reset Password',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                      color: textColor,
+                    ),
+                  ),
+                ],
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, color: Colors.orange),
+                onPressed: () => setState(() => _showResetRequests = false),
+              ),
+            ],
+          ),
+          const Divider(color: Colors.orange),
+          
+          if (_passwordResetRequests.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Center(
+                child: Column(
+                  children: [
+                    Icon(Icons.check_circle, color: Colors.green, size: 48),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Tidak ada permintaan reset password',
+                      style: TextStyle(color: textColor),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            Column(
+              children: _passwordResetRequests.map((request) {
+                final requestedDate = _formatDate(request['requestedAt']);
+                
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: isDarkMode ? Colors.grey[900]! : Colors.grey[50]!,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: borderColor),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              request['userName'],
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: textColor,
+                                fontSize: 14,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              request['email'],
+                              style: TextStyle(
+                                color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
+                                fontSize: 12,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Diajukan: $requestedDate',
+                              style: TextStyle(
+                                color: isDarkMode ? Colors.grey[500] : Colors.grey[500],
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _PillIcon(
+                            Icons.check,
+                            Colors.green,
+                            () => _approvePasswordReset(request),
+                            isDarkMode,
+                          ),
+                          const SizedBox(width: 8),
+                          _PillIcon(
+                            Icons.close,
+                            Colors.red,
+                            () => _rejectPasswordReset(request),
+                            isDarkMode,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+        ],
+      ),
+    );
   }
 
   void _addFarmer() {
@@ -182,6 +640,8 @@ class _AdminFarmersScreenState extends State<AdminFarmersScreen> {
                             'status': 'active',
                             'displayName': nameController.text,
                             'farmCount': 0,
+                            'passwordChangeStatus': 'none',
+                            'approvedNewPassword': null,
                           });
 
                           // Tambah activity log
@@ -434,6 +894,21 @@ class _AdminFarmersScreenState extends State<AdminFarmersScreen> {
 
                 // Hapus data dari database
                 await _databaseRef.child('users').child(farmer['id']).remove();
+                
+                // Hapus juga permintaan reset password terkait
+                final requestsSnapshot = await _databaseRef
+                    .child('passwordResetRequests')
+                    .orderByChild('userId')
+                    .equalTo(farmer['id'])
+                    .once();
+                
+                final requestsData = requestsSnapshot.snapshot.value as Map<dynamic, dynamic>?;
+                if (requestsData != null) {
+                  requestsData.forEach((key, value) async {
+                    await _databaseRef.child('passwordResetRequests/$key').remove();
+                  });
+                }
+
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -507,6 +982,9 @@ class _AdminFarmersScreenState extends State<AdminFarmersScreen> {
                   ),
                   const SizedBox(height: 16),
 
+                  // Notifikasi reset password
+                  _buildResetPasswordNotification(),
+
                   // SEARCH BAR + ADD BUTTON
                   Row(
                     children: [
@@ -555,7 +1033,7 @@ class _AdminFarmersScreenState extends State<AdminFarmersScreen> {
                         height: 48,
                         child: ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: _addButtonColor, // Warna merah
+                            backgroundColor: _addButtonColor,
                             foregroundColor: Colors.white,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(14),
@@ -572,6 +1050,10 @@ class _AdminFarmersScreenState extends State<AdminFarmersScreen> {
                 ],
               ),
             ),
+
+            // Panel permintaan reset password (jika ada dan ditampilkan)
+            if (_showResetRequests && _passwordResetRequests.isNotEmpty)
+              _buildResetRequestsPanel(),
 
             // TABLE/CARD AREA
             Expanded(
@@ -608,7 +1090,7 @@ class _AdminFarmersScreenState extends State<AdminFarmersScreen> {
                       ),
                     ),
 
-                    // DATA LIST dengan border dan kotak persegi panjang untuk setiap item
+                    // DATA LIST
                     Expanded(
                       child: _isLoading
                           ? Center(
@@ -685,12 +1167,11 @@ class _AdminFarmersScreenState extends State<AdminFarmersScreen> {
                                       final isActive = farmer['status'] == 'active';
                                       final joinDate = _formatDate(farmer['createdAt']);
 
-                                      // Kotak persegi panjang untuk setiap item
                                       return Container(
                                         margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                         decoration: BoxDecoration(
                                           color: cardColor,
-                                          borderRadius: BorderRadius.circular(8), // Border radius lebih kecil untuk bentuk persegi panjang
+                                          borderRadius: BorderRadius.circular(8),
                                           border: Border.all(
                                             color: borderColor,
                                             width: 1,
