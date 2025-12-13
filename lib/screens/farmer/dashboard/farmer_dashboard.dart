@@ -1,6 +1,7 @@
 // ignore_for_file: undefined_class, unused_local_variable
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
 import 'farmer_notifications.dart';
 import 'simple_chart.dart';
@@ -19,9 +20,19 @@ class FarmerDashboardScreen extends StatefulWidget {
 
 class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
   late DatabaseReference _databaseRef;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   bool _isLoading = true;
+  bool _isLoadingLand = true;
   int _unreadNotifications = 0;
   bool _notificationsEnabled = true;
+
+  // Data untuk lahan user
+  Map<String, dynamic> _landData = {
+    'name': 'Loading...',
+    'location': 'Loading...',
+    'luas': 'Loading...',
+    'owner': 'Loading...',
+  };
 
   Map<String, dynamic> sensorData = {
     'suhu': 0.0,
@@ -48,9 +59,95 @@ class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
   void initState() {
     super.initState();
     _databaseRef = FirebaseDatabase.instance.ref();
+    _loadUserLandData(); // Load data lahan user terlebih dahulu
     _setupRealtimeListener();
     _loadNotificationSettings();
     _setupNotificationListener();
+  }
+
+  // Method untuk memuat data lahan berdasarkan user yang login
+  Future<void> _loadUserLandData() async {
+    try {
+      final User? user = _auth.currentUser;
+      
+      if (user == null) {
+        setState(() {
+          _landData = {
+            'name': 'User tidak ditemukan',
+            'location': 'Silakan login kembali',
+            'luas': '-',
+            'owner': '-',
+          };
+          _isLoadingLand = false;
+        });
+        return;
+      }
+
+      // Ambil data user untuk mendapatkan nama
+      final userSnapshot = await _databaseRef.child('users/${user.uid}').get();
+      final userName = userSnapshot.child('name').value?.toString() ?? 'Petani';
+
+      // Cari lahan yang dimiliki oleh user ini
+      final landsSnapshot = await _databaseRef.child('lands').get();
+      
+      if (landsSnapshot.exists) {
+        bool landFound = false;
+        
+        for (final land in landsSnapshot.children) {
+          final owner = land.child('owner').value?.toString() ?? '';
+          
+          // Cocokkan dengan nama user
+          if (owner == userName) {
+            setState(() {
+              _landData = {
+                'name': land.child('name').value?.toString() ?? 'Lahan Anda',
+                'location': land.child('location').value?.toString() ?? 'Lokasi tidak diketahui',
+                'luas': land.child('luas').value?.toString() ?? '-',
+                'owner': userName,
+              };
+              landFound = true;
+              _isLoadingLand = false;
+            });
+            break;
+          }
+        }
+        
+        if (!landFound) {
+          // Jika tidak ada lahan yang ditemukan untuk user ini
+          setState(() {
+            _landData = {
+              'name': 'Belum ada lahan',
+              'location': 'Hubungi admin untuk menambahkan lahan',
+              'luas': '-',
+              'owner': userName,
+            };
+            _isLoadingLand = false;
+          });
+        }
+      } else {
+        // Jika tidak ada data lahan sama sekali
+        setState(() {
+          _landData = {
+            'name': 'Tidak ada data lahan',
+            'location': 'Database kosong',
+            'luas': '-',
+            'owner': userName,
+          };
+          _isLoadingLand = false;
+        });
+      }
+    } catch (e) {
+      print('❌ Error loading land data: $e');
+      setState(() {
+        _landData = {
+          'name': 'Error loading data',
+          'location': 'Terjadi kesalahan',
+          'luas': '-',
+          'owner': '-',
+        };
+        _isLoadingLand = false;
+      });
+    }
   }
 
   void _loadNotificationSettings() async {
@@ -527,8 +624,10 @@ class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
           onRefresh: () async {
             setState(() {
               _isLoading = true;
+              _isLoadingLand = true;
             });
             await Future.delayed(const Duration(seconds: 1));
+            await _loadUserLandData();
             setState(() {
               _isLoading = false;
             });
@@ -541,14 +640,17 @@ class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildHeader(isDarkMode),
+                const SizedBox(height: 20),
+                
+                // INFO LAHAN USER - DITAMPILKAN DI ATAS
+                _buildLandInfoCard(isDarkMode),
                 const SizedBox(height: 24),
+                
                 _buildSensorGrid(isDarkMode),
                 const SizedBox(height: 24),
                 _buildActuatorStatus(isDarkMode),
                 const SizedBox(height: 24),
                 _buildChartSection(isDarkMode),
-                const SizedBox(height: 24),
-                _buildLandInfoCard(isDarkMode),
               ],
             ),
           ),
@@ -641,6 +743,130 @@ class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
     );
   }
 
+  Widget _buildLandInfoCard(bool isDarkMode) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A237E), // Warna konsisten dengan tema
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDarkMode ? 0.3 : 0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.landscape, color: Colors.white),
+              const SizedBox(width: 8),
+              Text(
+                'Info Lahan Anda',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          
+          if (_isLoadingLand)
+            Center(
+              child: CircularProgressIndicator(
+                color: Colors.white,
+              ),
+            )
+          else
+            Column(
+              children: [
+                _buildLandInfoRow(
+                  Icons.agriculture,
+                  'Nama Lahan',
+                  _landData['name'],
+                  isDarkMode,
+                ),
+                const SizedBox(height: 10),
+                _buildLandInfoRow(
+                  Icons.location_on,
+                  'Lokasi',
+                  _landData['location'],
+                  isDarkMode,
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildLandInfoRow(
+                        Icons.square_foot,
+                        'Luas',
+                        '${_landData['luas']} ha',
+                        isDarkMode,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: _buildLandInfoRow(
+                        Icons.person,
+                        'Pemilik',
+                        _landData['owner'],
+                        isDarkMode,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLandInfoRow(IconData icon, String label, String value, bool isDarkMode) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: Colors.white70, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.white70,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSensorGrid(bool isDarkMode) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -652,7 +878,7 @@ class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
               color: const Color.fromARGB(255, 45, 167, 49),
               size: 26,
             ),
-            const SizedBox(width: 8), // Jarak antara icon dan teks
+            const SizedBox(width: 8),
             Text(
               'Data Sensor Real-time',
               style: TextStyle(
@@ -1026,7 +1252,7 @@ class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
             color:
-                isDarkMode ? Colors.grey[800]! : Colors.grey.withOpacity(0.2)),
+                isDarkMode ? const Color.fromARGB(255, 189, 110, 110) : Colors.grey.withOpacity(0.2)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(isDarkMode ? 0.3 : 0.1),
@@ -1092,85 +1318,6 @@ class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
                 ),
               ),
             ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLandInfoCard(bool isDarkMode) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDarkMode ? Colors.grey[900] : Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDarkMode ? Colors.grey[800]! : Colors.grey.withOpacity(0.2),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(isDarkMode ? 0.3 : 0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.landscape,
-                  color: isDarkMode ? Colors.green[200] : Colors.green),
-              const SizedBox(width: 8),
-              Text(
-                'Info Lahan',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: isDarkMode ? Colors.green[200] : Colors.green,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              const Icon(Icons.edit_location, color: Colors.grey),
-              const SizedBox(width: 8),
-              Text(
-                'Nama Lahan: Lahan Contoh',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: isDarkMode ? Colors.white : Colors.black,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              const Icon(Icons.location_on, color: Colors.grey),
-              const SizedBox(width: 8),
-              Text(
-                'Lokasi: Desa Contoh, Kecamatan Contoh',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: isDarkMode ? Colors.white : Colors.black,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            height: 250,
-            width: double.infinity,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.asset(
-                'images/maps.png',
-              ),
-            ),
-          ),
         ],
       ),
     );
