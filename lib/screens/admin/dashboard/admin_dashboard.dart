@@ -58,6 +58,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _totalFarmers = 0;
   int _totalLands = 0;
   int _activeNodes = 0;
+  int _totalNodes = 0;
   int _criticalAlerts = 0;
   int _totalHarvests = 0;
   double _averageYield = 0.0;
@@ -270,8 +271,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       });
   }
 
-  // Load statistik dengan error handling
+  // Load statistik dengan error handling - PERBAIKAN DISINI
   void _loadStatistics() {
+    // Load users (petani)
     _usersStream?.cancel();
     _usersStream = _databaseRef.child('users').orderByChild('role').equalTo('farmer').onValue.listen((event) {
       if (!mounted) return;
@@ -284,6 +286,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       }
     });
 
+    // Load lands
     _landsStream?.cancel();
     _landsStream = _databaseRef.child('lands').onValue.listen((event) {
       if (!mounted) return;
@@ -296,19 +299,46 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       }
     });
 
+    // PERBAIKAN DISINI: Load nodes dari root database (device dengan awalan "node")
     _nodesStream?.cancel();
-    _nodesStream = _databaseRef.child('nodes').onValue.listen((event) {
+    _nodesStream = _databaseRef.onValue.listen((event) {
       if (!mounted) return;
       
-      final data = event.snapshot.value as Map<dynamic, dynamic>?;
-      if (data != null) {
+      try {
+        final data = event.snapshot.value as Map<dynamic, dynamic>?;
+        int totalNodes = 0;
+        int activeNodes = 0;
+        
+        if (data != null) {
+          // Loop melalui semua data di root untuk mencari device dengan awalan "node"
+          data.forEach((key, value) {
+            final deviceId = key.toString();
+            
+            // Cek apakah ini device dengan awalan "node" (seperti node001, node002)
+            if (deviceId.startsWith('node')) {
+              totalNodes++;
+              
+              // Cek status device
+              if (value is Map) {
+                final status = value['status']?.toString() ?? 'active';
+                if (status.toLowerCase() == 'active') {
+                  activeNodes++;
+                }
+              }
+            }
+          });
+        }
+        
         setState(() {
-          _activeNodes = data.values.where((node) => 
-            node['status'] == 'online').length;
+          _totalNodes = totalNodes;
+          _activeNodes = activeNodes;
         });
+      } catch (e) {
+        print('❌ Admin: Error reading nodes data: $e');
       }
     });
 
+    // Load harvests
     _harvestsStream?.cancel();
     _harvestsStream = _databaseRef.child('harvests').onValue.listen((event) {
       if (!mounted) return;
@@ -882,6 +912,24 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Widget _buildStatsGrid(bool isDarkMode, Color cardColor, Color textColor, Color subtitleColor) {
+    // Hitung status node aktif
+    String nodeStatus;
+    Color nodeStatusColor;
+    
+    if (_totalNodes == 0) {
+      nodeStatus = 'Tidak Ada';
+      nodeStatusColor = Colors.grey;
+    } else if (_activeNodes == _totalNodes) {
+      nodeStatus = 'Optimal';
+      nodeStatusColor = Colors.green;
+    } else if (_activeNodes >= _totalNodes / 2) {
+      nodeStatus = 'Perhatian';
+      nodeStatusColor = Colors.orange;
+    } else {
+      nodeStatus = 'Kritis';
+      nodeStatusColor = Colors.red;
+    }
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -933,11 +981,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             _buildStatCard(
               icon: Icons.wifi,
               title: 'Node Aktif',
-              value: '$_activeNodes',
+              value: '$_activeNodes/$_totalNodes',
               unit: 'Node',
-              status: _activeNodes == _totalLands ? 'Optimal' : 'Perhatian',
+              status: nodeStatus,
               color: Colors.purple,
-              statusColor: _activeNodes == _totalLands ? Colors.green : Colors.orange,
+              statusColor: nodeStatusColor,
             ),
             _buildStatCard(
               icon: Icons.warning,

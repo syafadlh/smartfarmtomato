@@ -1,4 +1,5 @@
 // ignore_for_file: undefined_class
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 
@@ -13,31 +14,44 @@ class _AdminDevicesScreenState extends State<AdminDevicesScreen> {
   final _db = FirebaseDatabase.instance.ref();
   final _searchCtrl = TextEditingController();
   bool _isLoading = true;
-  List<Map<String, dynamic>> lahanList = [];
   List<Map<String, dynamic>> deviceList = [];
   List<Map<String, dynamic>> filtered = [];
-  List<String> petaniDropdown = [];
   Map<String, Map<String, dynamic>> lahanMap = {};
+  
+  // Untuk menyimpan stream subscription
+  StreamSubscription? _deviceStreamSubscription;
 
   @override
   void initState() {
     super.initState();
-    _loadUsers();
-    _loadLahanMap();
-    _loadDevices();
+    _loadInitialData();
   }
 
-  // ================= LOAD USERS =================
-  Future<void> _loadUsers() async {
-    final snap = await _db.child('users').get();
-    final temp = <String>[];
-    if (snap.exists) {
-      for (var u in snap.children) {
-        final n = u.child('name').value?.toString();
-        if (n != null) temp.add(n);
-      }
+  @override
+  void dispose() {
+    // Cancel stream subscription saat dispose
+    _deviceStreamSubscription?.cancel();
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  // ================= LOAD DATA AWAL =================
+  Future<void> _loadInitialData() async {
+    setState(() => _isLoading = true);
+    
+    try {
+      // Load lahan map terlebih dahulu
+      await _loadLahanMap();
+      
+      // Load devices dengan sekali ambil data (once)
+      await _loadDevicesOnce();
+      
+      // Set up realtime listener untuk update
+      _setupRealtimeListener();
+    } catch (e) {
+      print("Error loading initial data: $e");
+      setState(() => _isLoading = false);
     }
-    setState(() => petaniDropdown = temp);
   }
 
   // ================= LOAD LAHAN MAP =================
@@ -57,71 +71,108 @@ class _AdminDevicesScreenState extends State<AdminDevicesScreen> {
     setState(() => lahanMap = temp);
   }
 
-  // ================= LOAD DEVICES =================
-  void _loadDevices() {
-    _db.onValue.listen((event) async {
+  // ================= LOAD DEVICES SEKALI =================
+  Future<void> _loadDevicesOnce() async {
+    final deviceSnap = await _db.get();
+    List<Map<String, dynamic>> devices = [];
+    
+    if (deviceSnap.exists) {
+      for (var snap in deviceSnap.children) {
+        final deviceId = snap.key.toString();
+        // Ambil hanya node001 / node002
+        if (!deviceId.startsWith("node")) continue;
+
+        await _processDevice(snap, deviceId, devices);
+      }
+    }
+    
+    setState(() {
+      deviceList = devices;
+      filtered = devices;
+      _isLoading = false;
+    });
+  }
+
+  // ================= SETUP REALTIME LISTENER =================
+  void _setupRealtimeListener() {
+    // Cancel previous listener jika ada
+    _deviceStreamSubscription?.cancel();
+    
+    _deviceStreamSubscription = _db.onValue.listen((event) async {
+      // Hanya proses jika ada perubahan
+      if (!mounted) return;
+      
       List<Map<String, dynamic>> devices = [];
       if (event.snapshot.exists) {
         for (var snap in event.snapshot.children) {
           final deviceId = snap.key.toString();
-          // Ambil hanya node001 / node002
           if (!deviceId.startsWith("node")) continue;
 
-          // Ambil data status dari Firebase
-          final deviceStatus =
-              snap.child("status").value?.toString() ?? "active";
-          final landKey = snap.child("landKey").value?.toString();
-
-          Map<String, dynamic> landData;
-
-          // Cari data lahan berdasarkan landKey jika ada
-          if (landKey != null &&
-              landKey.isNotEmpty &&
-              lahanMap.containsKey(landKey)) {
-            landData = {
-              "name": lahanMap[landKey]!["name"] ?? "-",
-              "luas": lahanMap[landKey]!["luas"] ?? "-",
-              "owner": lahanMap[landKey]!["owner"] ?? "-",
-              "location": lahanMap[landKey]!["location"] ?? "-",
-            };
-          } else {
-            
-            if (lahanMap.isNotEmpty) {
-              final firstKey = lahanMap.keys.first;
-              landData = {
-                "name": lahanMap[firstKey]!["name"] ?? "-",
-                "luas": lahanMap[firstKey]!["luas"] ?? "-",
-                "owner": lahanMap[firstKey]!["owner"] ?? "-",
-                "location": lahanMap[firstKey]!["location"] ?? "-",
-              };
-            } else {
-              landData = {
-                "name": "-",
-                "luas": "-",
-                "owner": "-",
-                "location": "-",
-              };
-            }
-          }
-
-          devices.add({
-            "deviceId": deviceId,
-            "deviceName": deviceId,
-            "landKey": landKey ?? "",
-            "landName": landData["name"],
-            "luas": landData["luas"],
-            "owner": landData["owner"],
-            "location": landData["location"],
-            "status": deviceStatus,
-          });
+          await _processDevice(snap, deviceId, devices);
         }
       }
-      setState(() {
-        deviceList = devices;
-        filtered = devices;
-        _isLoading = false;
-      });
+      
+      if (mounted) {
+        setState(() {
+          deviceList = devices;
+          // Pertahankan filter yang aktif
+          if (_searchCtrl.text.isEmpty) {
+            filtered = devices;
+          } else {
+            _search(_searchCtrl.text);
+          }
+          _isLoading = false;
+        });
+      }
     });
+  }
+
+  // ================= PROCESS DEVICE =================
+  Future<void> _processDevice(
+    DataSnapshot snap, 
+    String deviceId, 
+    List<Map<String, dynamic>> devices
+  ) async {
+    final deviceStatus = snap.child("status").value?.toString() ?? "active";
+    final landKey = snap.child("landKey").value?.toString();
+    
+    Map<String, dynamic> landData;
+
+    // Cari data lahan berdasarkan landKey jika ada
+    if (landKey != null && landKey.isNotEmpty && lahanMap.containsKey(landKey)) {
+      landData = {
+        "name": lahanMap[landKey]!["name"] ?? "-",
+        "luas": lahanMap[landKey]!["luas"] ?? "-",
+        "owner": lahanMap[landKey]!["owner"] ?? "-",
+        "location": lahanMap[landKey]!["location"] ?? "-",
+      };
+    } else {
+      // Jika tidak ada lahan terkait
+      landData = {
+        "name": "-",
+        "luas": "-",
+        "owner": "-",
+        "location": "-",
+      };
+    }
+
+    devices.add({
+      "deviceId": deviceId,
+      "deviceName": deviceId,
+      "landKey": landKey ?? "",
+      "landName": landData["name"],
+      "luas": landData["luas"],
+      "owner": landData["owner"],
+      "location": landData["location"],
+      "status": deviceStatus,
+    });
+  }
+
+  // ================= REFRESH DATA =================
+  Future<void> _refreshData() async {
+    setState(() => _isLoading = true);
+    await _loadLahanMap();
+    await _loadDevicesOnce();
   }
 
   // ================= DELETE =================
@@ -141,19 +192,23 @@ class _AdminDevicesScreenState extends State<AdminDevicesScreen> {
               Navigator.pop(context);
               try {
                 await _db.child(id).remove();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text("Perangkat dihapus"),
-                    backgroundColor: Colors.green,
-                  ),
-                );
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text("Perangkat dihapus"),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
               } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text("Error: ${e.toString()}"),
-                    backgroundColor: Colors.red,
-                  ),
-                );
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text("Error: ${e.toString()}"),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
               }
             },
             child: const Text("Hapus", style: TextStyle(color: Colors.red)),
@@ -710,6 +765,12 @@ class _AdminDevicesScreenState extends State<AdminDevicesScreen> {
                   color: dark ? Colors.white : Colors.black,
                 ),
               ),
+              const Spacer(),
+              IconButton(
+                onPressed: _refreshData,
+                icon: Icon(Icons.refresh, color: dark ? Colors.white : Colors.black54),
+                tooltip: "Refresh",
+              ),
             ],
           ),
           const SizedBox(height: 4),
@@ -774,11 +835,27 @@ class _AdminDevicesScreenState extends State<AdminDevicesScreen> {
                   ? const Center(child: CircularProgressIndicator())
                   : filtered.isEmpty
                       ? Center(
-                          child: Text(
-                            "Tidak ada perangkat",
-                            style: TextStyle(
-                                color:
-                                    dark ? Colors.grey[400] : Colors.black54),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.devices,
+                                size: 60,
+                                color: dark ? Colors.grey[600] : Colors.grey[400],
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                "Tidak ada perangkat",
+                                style: TextStyle(
+                                    color: dark ? Colors.grey[400] : Colors.black54,
+                                    fontSize: 16),
+                              ),
+                              const SizedBox(height: 8),
+                              TextButton(
+                                onPressed: _refreshData,
+                                child: const Text("Refresh"),
+                              ),
+                            ],
                           ),
                         )
                       : ListView.builder(
