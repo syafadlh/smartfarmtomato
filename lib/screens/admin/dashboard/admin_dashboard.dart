@@ -6,44 +6,6 @@ import 'package:provider/provider.dart';
 import 'package:smartfarmtomato/providers/theme_provider.dart';
 import 'admin_notifications.dart';
 
-class AdminNotificationItem {
-  final String id;
-  final String title;
-  final String message;
-  final String source;
-  final bool isRead;
-  final int timestamp;
-  final IconData typeIcon;
-  final Color typeColor;
-
-  AdminNotificationItem({
-    required this.id,
-    required this.title,
-    required this.message,
-    required this.source,
-    required this.isRead,
-    required this.timestamp,
-    required this.typeIcon,
-    required this.typeColor,
-  });
-
-  String get formattedTime {
-    final now = DateTime.now();
-    final time = DateTime.fromMillisecondsSinceEpoch(timestamp);
-    final difference = now.difference(time);
-    
-    if (difference.inMinutes < 1) {
-      return 'Baru saja';
-    } else if (difference.inMinutes < 60) {
-      return '${difference.inMinutes}m lalu';
-    } else if (difference.inHours < 24) {
-      return '${difference.inHours}h lalu';
-    } else {
-      return DateFormat('dd/MM').format(time);
-    }
-  }
-}
-
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
 
@@ -75,17 +37,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     'kategori_cahaya': 'Normal',
   };
 
-  // Status aktuator
-  Map<String, dynamic> actuatorData = {
-    'pump': false,
-    'light': false,
-    'autoMode': true,
-  };
-
   // Notifikasi
   int _unreadNotifications = 0;
   
-  // Alert kritis HANYA dari current_data dan history_data
+  // Alert kritis dari history_data dan current_data
   List<Map<String, dynamic>> _criticalAlertsList = [];
   
   bool _isLoading = true;
@@ -100,13 +55,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   // Stream subscriptions
   StreamSubscription? _currentDataStream;
-  StreamSubscription? _controlStream;
   StreamSubscription? _notificationsStream;
-  StreamSubscription? _alertsStream;
   StreamSubscription? _usersStream;
   StreamSubscription? _landsStream;
   StreamSubscription? _nodesStream;
   StreamSubscription? _harvestsStream;
+  StreamSubscription? _historyDataStream;
 
   @override
   void initState() {
@@ -114,40 +68,38 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     _initializeDashboard();
     _setupNotificationListener();
     _setupRealtimeListener();
-    _setupAlertListeners();
+    _setupHistoryDataListener(); // Listener untuk history_data
   }
 
   @override
   void dispose() {
     // Clean up semua stream subscriptions
     _currentDataStream?.cancel();
-    _controlStream?.cancel();
     _notificationsStream?.cancel();
-    _alertsStream?.cancel();
     _usersStream?.cancel();
     _landsStream?.cancel();
     _nodesStream?.cancel();
     _harvestsStream?.cancel();
+    _historyDataStream?.cancel();
     super.dispose();
   }
 
   void _initializeDashboard() {
     _loadStatistics();
-    _loadCriticalAlerts();
+    _loadHistoryAlerts(); // Memuat alerts dari history_data
   }
 
   void _setupNotificationListener() {
-    _notificationsStream = AdminNotificationService.getNotifications().listen((notifications) {
+    _notificationsStream = AdminNotificationService.getUnreadCount().listen((count) {
       if (!mounted) return;
       
-      final unread = notifications.where((n) => !n.isRead).length;
       setState(() {
-        _unreadNotifications = unread;
+        _unreadNotifications = count;
       });
     });
   }
 
-  // Setup realtime listener dari current_data dengan error handling
+  // Setup realtime listener dari current_data
   void _setupRealtimeListener() {
     _currentDataStream = _databaseRef.child('current_data').onValue.listen((event) {
       if (!mounted) return;
@@ -171,29 +123,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             };
             _isLoading = false;
           });
+
+          // Cek apakah ada kondisi kritis dari current_data
+          _checkCurrentDataForAlerts(data);
         }
       } catch (e) {
         print('❌ Admin: Error reading sensor data: $e');
-      }
-    });
-
-    _controlStream = _databaseRef.child('control').onValue.listen((event) {
-      if (!mounted) return;
-      
-      try {
-        final data = event.snapshot.value;
-
-        if (data != null && data is Map) {
-          setState(() {
-            actuatorData = {
-              'pump': data['pump'] == true,
-              'light': data['light'] == true,
-              'autoMode': data['autoMode'] == true,
-            };
-          });
-        }
-      } catch (e) {
-        print('❌ Admin: Error reading control data: $e');
       }
     });
 
@@ -207,71 +142,309 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     });
   }
 
-  // Setup listener untuk alert HANYA dari current_data dan history_data
-  void _setupAlertListeners() {
-    _alertsStream = _databaseRef.child('admin_notifications')
-      .orderByChild('type')
-      .equalTo('error')
+  // Setup listener untuk history_data untuk mendeteksi alert
+  void _setupHistoryDataListener() {
+    _historyDataStream = _databaseRef.child('history_data')
+      .limitToLast(100) // Ambil 100 data terakhir
       .onValue.listen((event) {
         if (!mounted) return;
         
-        final data = event.snapshot.value as Map<dynamic, dynamic>?;
-        if (data != null) {
-          final unresolvedAlerts = data.values.where((alert) => 
-            alert['isRead'] != true && 
-            (alert['source'] == 'current_data' || alert['source'] == 'history_data')
-          ).length;
-          
-          setState(() {
-            _criticalAlerts = unresolvedAlerts;
-          });
+        try {
+          final data = event.snapshot.value as Map<dynamic, dynamic>?;
+          if (data != null) {
+            _processHistoryDataForAlerts(data);
+          }
+        } catch (e) {
+          print('❌ Admin: Error reading history data: $e');
         }
       });
   }
 
-  // Load alert kritis HANYA dari notifikasi
-  void _loadCriticalAlerts() {
-    _alertsStream?.cancel(); // Cancel previous stream
-    _alertsStream = _databaseRef.child('admin_notifications')
+  // Load alerts dari history_data
+  void _loadHistoryAlerts() {
+    _databaseRef.child('history_data')
       .orderByChild('timestamp')
-      .limitToLast(10)
-      .onValue.listen((event) {
+      .limitToLast(100)
+      .once()
+      .then((event) {
         if (!mounted) return;
         
         final data = event.snapshot.value as Map<dynamic, dynamic>?;
-        final List<Map<String, dynamic>> alerts = [];
-        
         if (data != null) {
-          data.forEach((key, value) {
-            // Hanya ambil alert error dari current_data dan history_data
-            if ((value['type'] == 'error' || value['type'] == 'warning') && 
-                value['isRead'] != true &&
-                (value['source'] == 'current_data' || value['source'] == 'history_data')) {
-              
-              alerts.add({
-                'id': key.toString(),
-                'title': value['title']?.toString() ?? 'Alert',
-                'message': value['message']?.toString() ?? '',
-                'severity': value['type'] == 'error' ? 'high' : 'medium',
-                'timestamp': value['timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
-                'source': value['source']?.toString() ?? 'system',
-                'alertType': value['alertType']?.toString(),
-              });
-            }
-          });
-          
-          // Sort by timestamp descending
-          alerts.sort((a, b) => (b['timestamp'] as int).compareTo(a['timestamp'] as int));
-          
-          setState(() {
-            _criticalAlertsList = alerts.take(5).toList();
-            _criticalAlerts = alerts.length;
-          });
+          _processHistoryDataForAlerts(data);
         }
+      })
+      .catchError((error) {
+        print('❌ Admin: Error loading history alerts: $error');
       });
   }
 
-  // Load statistik dengan error handling - PERBAIKAN DISINI
+  // Proses data history untuk mendeteksi alert
+  void _processHistoryDataForAlerts(Map<dynamic, dynamic> data) {
+    final List<Map<String, dynamic>> alerts = [];
+    
+    data.forEach((key, value) {
+      if (value is Map) {
+        final timestamp = value['timestamp'] is int 
+            ? value['timestamp'] 
+            : DateTime.now().millisecondsSinceEpoch;
+        
+        // Cek kondisi kritis berdasarkan nilai sensor
+        final suhu = _toDouble(value['suhu']);
+        final kelembabanUdara = _toDouble(value['kelembaban_udara']);
+        final kelembabanTanah = _toDouble(value['kelembaban_tanah']);
+        final kecerahan = _toDouble(value['kecerahan']);
+        
+        // Status dari data
+        final statusSuhu = value['status_suhu']?.toString() ?? 'Normal';
+        final statusKelembaban = value['status_kelembaban']?.toString() ?? 'Normal';
+        final kategoriTanah = value['kategori_tanah']?.toString() ?? 'Normal';
+        final kategoriCahaya = value['kategori_cahaya']?.toString() ?? 'Normal';
+        
+        // Deteksi alert berdasarkan status atau nilai ekstrim
+        if (_isCriticalStatus(statusSuhu) || (suhu > 35 || suhu < 15)) {
+          alerts.add(_createAlertFromData(
+            id: key.toString(),
+            type: 'suhu',
+            value: suhu,
+            status: statusSuhu,
+            timestamp: timestamp,
+            source: 'history_data',
+          ));
+        }
+        
+        if (_isCriticalStatus(statusKelembaban) || (kelembabanUdara > 85 || kelembabanUdara < 40)) {
+          alerts.add(_createAlertFromData(
+            id: key.toString(),
+            type: 'kelembaban_udara',
+            value: kelembabanUdara,
+            status: statusKelembaban,
+            timestamp: timestamp,
+            source: 'history_data',
+          ));
+        }
+        
+        if (_isCriticalStatus(kategoriTanah) || (kelembabanTanah > 80 || kelembabanTanah < 30)) {
+          alerts.add(_createAlertFromData(
+            id: key.toString(),
+            type: 'kelembaban_tanah',
+            value: kelembabanTanah,
+            status: kategoriTanah,
+            timestamp: timestamp,
+            source: 'history_data',
+          ));
+        }
+        
+        if (_isCriticalStatus(kategoriCahaya)) {
+          alerts.add(_createAlertFromData(
+            id: key.toString(),
+            type: 'kecerahan',
+            value: kecerahan,
+            status: kategoriCahaya,
+            timestamp: timestamp,
+            source: 'history_data',
+          ));
+        }
+      }
+    });
+
+    // Sort by timestamp descending
+    alerts.sort((a, b) => (b['timestamp'] as int).compareTo(a['timestamp'] as int));
+
+    setState(() {
+      // Ambil hanya 5 alert terbaru
+      _criticalAlertsList = alerts.take(5).toList();
+      
+      // Update total critical alerts
+      _criticalAlerts = alerts.length;
+    });
+  }
+
+  // Cek apakah status termasuk kritis
+  bool _isCriticalStatus(String status) {
+    final lowerStatus = status.toLowerCase();
+    return lowerStatus.contains('panas') ||
+           lowerStatus.contains('dingin') ||
+           lowerStatus.contains('bahaya') ||
+           lowerStatus.contains('tinggi') ||
+           lowerStatus.contains('rendah') ||
+           lowerStatus.contains('risiko') ||
+           lowerStatus.contains('kering') ||
+           lowerStatus.contains('basah') ||
+           lowerStatus.contains('sangat') ||
+           lowerStatus.contains('gelap') ||
+           lowerStatus.contains('terang') ||
+           lowerStatus.contains('> max') ||
+           lowerStatus.contains('< min');
+  }
+
+  // Buat alert dari data sensor
+  Map<String, dynamic> _createAlertFromData({
+    required String id,
+    required String type,
+    required double? value,
+    required String status,
+    required dynamic timestamp,
+    required String source,
+  }) {
+    final now = DateTime.now();
+    final alertTime = timestamp is int 
+        ? DateTime.fromMillisecondsSinceEpoch(timestamp)
+        : now;
+    
+    final timeDiff = now.difference(alertTime);
+    
+    // Tentukan severity berdasarkan waktu (lebih baru = lebih tinggi severity)
+    String severity = 'low';
+    if (timeDiff.inHours < 1) {
+      severity = 'high';
+    } else if (timeDiff.inHours < 24) {
+      severity = 'medium';
+    }
+    
+    // Tentukan title dan message berdasarkan type
+    String title = '';
+    String message = '';
+    
+    switch (type) {
+      case 'suhu':
+        title = 'Alert Suhu';
+        message = 'Suhu ${value?.toStringAsFixed(1) ?? '-'}°C - $status';
+        break;
+      case 'kelembaban_udara':
+        title = 'Alert Kelembaban Udara';
+        message = 'Kelembaban ${value?.toStringAsFixed(1) ?? '-'}% - $status';
+        break;
+      case 'kelembaban_tanah':
+        title = 'Alert Kelembaban Tanah';
+        message = 'Kelembaban tanah ${value?.toStringAsFixed(1) ?? '-'}% - $status';
+        break;
+      case 'kecerahan':
+        title = 'Alert Intensitas Cahaya';
+        message = 'Kecerahan ${value?.toStringAsFixed(0) ?? '-'} lux - $status';
+        break;
+    }
+    
+    return {
+      'id': id,
+      'title': title,
+      'message': message,
+      'severity': severity,
+      'type': severity == 'high' ? 'error' : 'warning',
+      'sensor_type': type,
+      'value': value?.toString() ?? '-',
+      'status': status,
+      'timestamp': timestamp is int ? timestamp : now.millisecondsSinceEpoch,
+      'source': source,
+      'category': 'sensor_alert',
+    };
+  }
+
+  // Cek kondisi kritis dari current_data
+  void _checkCurrentDataForAlerts(Map<dynamic, dynamic> data) {
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    
+    // Cek suhu
+    final suhu = _toDouble(data['suhu']);
+    final statusSuhu = data['status_suhu']?.toString() ?? 'Normal';
+    
+    if (_isCriticalStatus(statusSuhu)) {
+      _addCurrentDataAlert(
+        title: 'Alert Suhu Real-time',
+        message: 'Suhu ${suhu.toStringAsFixed(1)}°C - $statusSuhu',
+        severity: 'high',
+        sensorType: 'suhu',
+        value: suhu.toString(),
+        status: statusSuhu,
+        timestamp: timestamp,
+      );
+    }
+
+    // Cek kelembaban udara
+    final kelembabanUdara = _toDouble(data['kelembaban_udara']);
+    final statusKelembaban = data['status_kelembaban']?.toString() ?? 'Normal';
+    
+    if (_isCriticalStatus(statusKelembaban)) {
+      _addCurrentDataAlert(
+        title: 'Alert Kelembaban Udara Real-time',
+        message: 'Kelembaban ${kelembabanUdara.toStringAsFixed(1)}% - $statusKelembaban',
+        severity: 'high',
+        sensorType: 'kelembaban_udara',
+        value: kelembabanUdara.toString(),
+        status: statusKelembaban,
+        timestamp: timestamp,
+      );
+    }
+
+    // Cek kelembaban tanah
+    final kelembabanTanah = _toDouble(data['kelembaban_tanah']);
+    final kategoriTanah = data['kategori_tanah']?.toString() ?? 'Normal';
+    
+    if (_isCriticalStatus(kategoriTanah)) {
+      _addCurrentDataAlert(
+        title: 'Alert Kelembaban Tanah Real-time',
+        message: 'Kelembaban tanah ${kelembabanTanah.toStringAsFixed(1)}% - $kategoriTanah',
+        severity: 'high',
+        sensorType: 'kelembaban_tanah',
+        value: kelembabanTanah.toString(),
+        status: kategoriTanah,
+        timestamp: timestamp,
+      );
+    }
+
+    // Cek kecerahan
+    final kecerahan = _toDouble(data['kecerahan']);
+    final kategoriCahaya = data['kategori_cahaya']?.toString() ?? 'Normal';
+    
+    if (_isCriticalStatus(kategoriCahaya)) {
+      _addCurrentDataAlert(
+        title: 'Alert Intensitas Cahaya Real-time',
+        message: 'Kecerahan ${kecerahan.toStringAsFixed(0)} lux - $kategoriCahaya',
+        severity: 'medium',
+        sensorType: 'kecerahan',
+        value: kecerahan.toString(),
+        status: kategoriCahaya,
+        timestamp: timestamp,
+      );
+    }
+  }
+
+  // Tambahkan alert dari current_data
+  void _addCurrentDataAlert({
+    required String title,
+    required String message,
+    required String severity,
+    required String sensorType,
+    required String value,
+    required String status,
+    required int timestamp,
+  }) {
+    final alert = {
+      'id': 'current_${DateTime.now().millisecondsSinceEpoch}',
+      'title': title,
+      'message': message,
+      'severity': severity,
+      'type': severity == 'high' ? 'error' : 'warning',
+      'sensor_type': sensorType,
+      'value': value,
+      'status': status,
+      'timestamp': timestamp,
+      'source': 'current_data',
+      'category': 'sensor_alert',
+    };
+
+    // Tambahkan ke awal list (karena real-time)
+    setState(() {
+      _criticalAlertsList.insert(0, alert);
+      // Batasi maksimal 10 alert
+      if (_criticalAlertsList.length > 10) {
+        _criticalAlertsList = _criticalAlertsList.take(10).toList();
+      }
+      _criticalAlerts = _criticalAlertsList.length;
+    });
+  }
+
+  // Load statistik dengan error handling
   void _loadStatistics() {
     // Load users (petani)
     _usersStream?.cancel();
@@ -299,7 +472,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       }
     });
 
-    // PERBAIKAN DISINI: Load nodes dari root database (device dengan awalan "node")
+    // Load nodes dari root database (device dengan awalan "node")
     _nodesStream?.cancel();
     _nodesStream = _databaseRef.onValue.listen((event) {
       if (!mounted) return;
@@ -522,7 +695,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             child: Row(
               children: [
                 Text(
-                  '🔔 Notifikasi Sistem',
+                  '🔔 Notifikasi Admin',
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -530,21 +703,26 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   ),
                 ),
                 const Spacer(),
-                if (_unreadNotifications > 0)
-                  TextButton(
-                    onPressed: () {
-                      AdminNotificationService.markAllAsRead();
-                      setState(() {
-                        _unreadNotifications = 0;
-                      });
-                    },
-                    child: Text(
-                      'Tandai Semua Dibaca',
-                      style: TextStyle(
-                        color: _primaryColor,
-                      ),
-                    ),
-                  ),
+                StreamBuilder<int>(
+                  stream: AdminNotificationService.getUnreadCount(),
+                  builder: (context, snapshot) {
+                    final unreadCount = snapshot.data ?? 0;
+                    if (unreadCount > 0) {
+                      return TextButton(
+                        onPressed: () {
+                          AdminNotificationService.markAllAsRead();
+                        },
+                        child: Text(
+                          'Tandai Semua Dibaca',
+                          style: TextStyle(
+                            color: _primaryColor,
+                          ),
+                        ),
+                      );
+                    }
+                    return Container();
+                  },
+                ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
                   icon: Icon(
@@ -557,9 +735,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
           Expanded(
             child: StreamBuilder<List<AdminNotificationItem>>(
-              stream: AdminNotificationService.getNotifications().map(
-                (list) => list.map((item) => item as AdminNotificationItem).toList(),
-              ),
+              stream: AdminNotificationService.getNotifications(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return Center(
@@ -583,6 +759,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         Text(
                           'Tidak ada notifikasi',
                           style: TextStyle(
+                            color: Colors.grey,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Notifikasi petani baru dan reset password akan muncul di sini',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 12,
                             color: Colors.grey,
                           ),
                         ),
@@ -615,6 +800,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         if (!notification.isRead) {
           AdminNotificationService.markAsRead(notification.id);
         }
+        // Bisa tambahkan aksi spesifik berdasarkan action
+        _handleNotificationAction(notification);
       },
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -675,7 +862,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
-                          'Sumber: ${_getSourceLabel(notification.source)}',
+                          'Sumber: ${notification.sourceLabel}',
                           style: const TextStyle(
                             fontSize: 10,
                             color: Colors.grey,
@@ -692,6 +879,79 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ),
                     ],
                   ),
+                  // Tampilkan informasi tambahan untuk password reset
+                  if (notification.requestId != null && notification.category == 'password_reset')
+                    Container(
+                      margin: const EdgeInsets.only(top: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info, size: 10, color: Colors.orange),
+                          const SizedBox(width: 4),
+                          Text(
+                            'ID: ${notification.requestId}',
+                            style: const TextStyle(
+                              fontSize: 9,
+                              color: Colors.orange,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  // Tampilkan informasi petani untuk user registration
+                  if (notification.userId != null && notification.category == 'user_registration')
+                    Container(
+                      margin: const EdgeInsets.only(top: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.person, size: 10, color: Colors.green),
+                          const SizedBox(width: 4),
+                          Text(
+                            'User: ${notification.userName}',
+                            style: const TextStyle(
+                              fontSize: 9,
+                              color: Colors.green,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  // Tampilkan alasan jika ada (untuk password reset ditolak)
+                  if (notification.reason != null && notification.reason!.isNotEmpty)
+                    Container(
+                      margin: const EdgeInsets.only(top: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.report, size: 10, color: Colors.red),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              'Alasan: ${notification.reason}',
+                              style: const TextStyle(
+                                fontSize: 9,
+                                color: Colors.red,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -699,13 +959,158 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               Container(
                 width: 8,
                 height: 8,
-                decoration: const BoxDecoration(
-                  color: Colors.red,
+                decoration: BoxDecoration(
+                  color: notification.priorityColor,
                   shape: BoxShape.circle,
                 ),
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _handleNotificationAction(AdminNotificationItem notification) {
+    // Handle aksi berdasarkan tipe notifikasi
+    switch (notification.action) {
+      case 'new_farmer':
+        // Navigasi ke halaman manajemen petani atau detail petani
+        _showFarmerDetail(notification);
+        break;
+      case 'password_reset_request':
+        // Navigasi ke halaman manajemen reset password
+        _showPasswordResetDetail(notification);
+        break;
+      case 'password_reset_approved':
+        // Tampilkan informasi approval
+        _showApprovalInfo(notification);
+        break;
+      case 'password_reset_rejected':
+        // Tampilkan informasi penolakan
+        _showRejectionInfo(notification);
+        break;
+    }
+  }
+
+  void _showFarmerDetail(AdminNotificationItem notification) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Detail Petani Baru'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Nama: ${notification.userName ?? "Tidak diketahui"}'),
+            Text('Email: ${notification.userEmail ?? "Tidak diketahui"}'),
+            Text('ID: ${notification.userId ?? "Tidak diketahui"}'),
+            const SizedBox(height: 8),
+            Text(
+              'Status: Petani baru telah mendaftar',
+              style: TextStyle(color: Colors.green),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Tutup'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPasswordResetDetail(AdminNotificationItem notification) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Detail Reset Password'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Nama: ${notification.userName ?? "Tidak diketahui"}'),
+            Text('Email: ${notification.userEmail ?? "Tidak diketahui"}'),
+            Text('ID Permintaan: ${notification.requestId ?? "Tidak diketahui"}'),
+            const SizedBox(height: 8),
+            Text(
+              'Status: Menunggu Approval',
+              style: TextStyle(color: Colors.orange),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Tutup'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showApprovalInfo(AdminNotificationItem notification) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reset Password Disetujui'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Nama: ${notification.userName ?? "Tidak diketahui"}'),
+            Text('Email: ${notification.userEmail ?? "Tidak diketahui"}'),
+            const SizedBox(height: 8),
+            Text(
+              'Status: Password telah direset',
+              style: TextStyle(color: Colors.green),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Tutup'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRejectionInfo(AdminNotificationItem notification) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reset Password Ditolak'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Nama: ${notification.userName ?? "Tidak diketahui"}'),
+            Text('Email: ${notification.userEmail ?? "Tidak diketahui"}'),
+            if (notification.reason != null && notification.reason!.isNotEmpty)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 8),
+                  const Text('Alasan Penolakan:'),
+                  Text(notification.reason!),
+                ],
+              ),
+            const SizedBox(height: 8),
+            Text(
+              'Status: Permintaan ditolak',
+              style: TextStyle(color: Colors.red),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Tutup'),
+          ),
+        ],
       ),
     );
   }
@@ -718,8 +1123,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         return 'Data History';
       case 'registration':
         return 'Pendaftaran';
-      case 'user_activity':
-        return 'Aktivitas User';
+      case 'password_reset':
+        return 'Reset Password';
       case 'system':
         return 'Sistem';
       default:
@@ -795,7 +1200,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             
             if (mounted) {
               _loadStatistics();
-              _loadCriticalAlerts();
+              _loadHistoryAlerts();
               setState(() {
                 _isLoading = false;
               });
@@ -813,8 +1218,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 _buildStatsGrid(isDarkMode, cardColor, textColor, subtitleColor),
                 const SizedBox(height: 24),
                 _buildSensorGrid(isDarkMode, cardColor, textColor, subtitleColor),
-                const SizedBox(height: 24),
-                _buildSystemStatus(isDarkMode, cardColor, textColor),
                 const SizedBox(height: 24),
                 _buildCriticalAlertsSection(isDarkMode, cardColor, textColor, subtitleColor),
               ],
@@ -1116,7 +1519,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         Row(
           children: [
             Icon(
-              Icons.power_settings_new,
+              Icons.sensors,
               color: const Color.fromARGB(255, 45, 167, 49),
               size: 26,
             ),
@@ -1302,184 +1705,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  Widget _buildSystemStatus(bool isDarkMode, Color cardColor, Color textColor) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A237E),
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: isDarkMode ? [] : [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.engineering, color: Colors.white),
-              const SizedBox(width: 8),
-              const Text(
-                'Status Sistem',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              _buildSystemItem(
-                icon: Icons.water_drop,
-                title: 'Pompa Air',
-                status: actuatorData['pump'] ? 'ON' : 'OFF',
-                statusColor: actuatorData['pump'] ? Colors.green : Colors.red,
-                mode: actuatorData['autoMode'] ? 'Auto' : 'Manual',
-                iconColor: Colors.blue,
-                isDarkMode: isDarkMode,
-              ),
-              const SizedBox(width: 12),
-              _buildSystemItem(
-                icon: Icons.lightbulb,
-                title: 'Lampu Tumbuh',
-                status: actuatorData['light'] ? 'ON' : 'OFF',
-                statusColor: actuatorData['light'] ? Colors.green : Colors.red,
-                mode: actuatorData['autoMode'] ? 'Auto' : 'Manual',
-                iconColor: Colors.yellow,
-                isDarkMode: isDarkMode,
-              ),
-              const SizedBox(width: 12),
-              _buildSystemItem(
-                icon: actuatorData['autoMode']
-                    ? Icons.auto_mode
-                    : Icons.engineering,
-                title: 'Mode Sistem',
-                status: actuatorData['autoMode'] ? 'Auto' : 'Manual',
-                statusColor:
-                    actuatorData['autoMode'] ? Colors.blue : Colors.orange,
-                mode: 'Aktif',
-                iconColor: Colors.green,
-                isDarkMode: isDarkMode,
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.info,
-                  color: Colors.white70,
-                  size: 16,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    actuatorData['autoMode']
-                        ? 'Sistem berjalan otomatis berdasarkan kondisi sensor'
-                        : 'Kontrol manual aktif - Anda dapat mengontrol di halaman Kontrol',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Colors.white70,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSystemItem({
-    required IconData icon,
-    required String title,
-    required String status,
-    required Color statusColor,
-    required String mode,
-    Color? iconColor,
-    required bool isDarkMode,
-  }) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: isDarkMode ? Colors.grey[800]! : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: isDarkMode ? [] : [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: isDarkMode ? Colors.grey[700]! : Colors.grey[200]!,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon,
-                  color: iconColor ?? (isDarkMode ? Colors.white : Colors.grey[700]!),
-                  size: 24),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: isDarkMode ? Colors.white : Colors.black87,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              status,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: statusColor,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: isDarkMode ? Colors.grey[700]! : Colors.grey[100]!,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                mode,
-                style: TextStyle(
-                  fontSize: 10,
-                  color: isDarkMode ? Colors.grey[300]! : Colors.grey,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildCriticalAlertsSection(bool isDarkMode, Color cardColor, Color textColor, Color subtitleColor) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1503,7 +1728,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               Icon(Icons.warning, color: _lightColor),
               const SizedBox(width: 8),
               Text(
-                'Alert Kritis',
+                'Alert Sensor', // Judul diubah menjadi "Alert Sensor"
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -1531,7 +1756,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        '${_criticalAlertsList.length} Alert',
+                        '$_criticalAlerts Alert',
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
@@ -1552,19 +1777,19 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       Icon(
                         Icons.check_circle, 
                         size: 40, 
-                        color: _greenColor,
+                        color: Colors.green,
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Tidak ada alert kritis',
+                        'Tidak ada alert sensor',
                         style: TextStyle(
-                          color: _greenColor,
+                          color: Colors.green,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Semua sistem berjalan normal',
+                        'Semua kondisi sensor dalam batas normal',
                         style: TextStyle(
                           fontSize: 12,
                           color: subtitleColor,
@@ -1577,6 +1802,24 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   children: _criticalAlertsList.map((alert) => 
                     _buildAlertItem(alert, isDarkMode, textColor, subtitleColor)).toList(),
                 ),
+          const SizedBox(height: 12),
+          if (_criticalAlerts > 5)
+            Center(
+              child: TextButton.icon(
+                onPressed: () {
+                  // Navigasi ke halaman semua alerts jika perlu
+                  print('Lihat semua alert');
+                },
+                icon: Icon(Icons.list, color: _primaryColor),
+                label: Text(
+                  'Lihat Semua Alert ($_criticalAlerts)',
+                  style: TextStyle(
+                    color: _primaryColor,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -1586,8 +1829,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final severity = alert['severity'];
     final color = _getSeverityColor(severity);
     final timeAgo = _formatTimeAgo(alert['timestamp']);
-    final source = alert['source'] ?? 'system';
-    final alertType = alert['alertType'] ?? 'general';
+    final source = alert['source'] ?? 'history_data';
+    final type = alert['type'] ?? 'warning';
+    final sensorType = alert['sensor_type'];
+    final value = alert['value'];
+    final status = alert['status'];
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -1602,14 +1848,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         children: [
           Row(
             children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: color,
-                  shape: BoxShape.circle,
-                ),
-              ),
+              // Icon berdasarkan tipe
+              _getAlertIcon(type, color),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -1628,7 +1868,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
-                  severity.toUpperCase(),
+                  _getSeverityLabel(severity),
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.bold,
@@ -1646,6 +1886,37 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               color: subtitleColor,
             ),
           ),
+          // Tampilkan data sensor jika ada
+          if (sensorType != null && value != null)
+            Container(
+              margin: const EdgeInsets.only(top: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.sensors, size: 10, color: Colors.blue),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${_getSensorLabel(sensorType)}: $value',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      color: Colors.blue,
+                    ),
+                  ),
+                  if (status != null)
+                    Text(
+                      ' (Status: $status)',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: Colors.orange,
+                      ),
+                    ),
+                ],
+              ),
+            ),
           const SizedBox(height: 4),
           Row(
             children: [
@@ -1676,6 +1947,48 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         ],
       ),
     );
+  }
+
+  Widget _getAlertIcon(String type, Color color) {
+    switch (type) {
+      case 'warning':
+        return Icon(Icons.warning, size: 16, color: color);
+      case 'error':
+        return Icon(Icons.error, size: 16, color: color);
+      case 'success':
+        return Icon(Icons.check_circle, size: 16, color: color);
+      case 'info':
+      default:
+        return Icon(Icons.info, size: 16, color: color);
+    }
+  }
+
+  String _getSeverityLabel(String severity) {
+    switch (severity) {
+      case 'high':
+        return 'TINGGI';
+      case 'medium':
+        return 'SEDANG';
+      case 'low':
+        return 'RENDAH';
+      default:
+        return severity.toUpperCase();
+    }
+  }
+
+  String _getSensorLabel(String sensorType) {
+    switch (sensorType) {
+      case 'suhu':
+        return 'Suhu';
+      case 'kelembaban_udara':
+        return 'Kelembaban Udara';
+      case 'kelembaban_tanah':
+        return 'Kelembaban Tanah';
+      case 'kecerahan':
+        return 'Intensitas Cahaya';
+      default:
+        return sensorType;
+    }
   }
 
   Color _getSeverityColor(String severity) {

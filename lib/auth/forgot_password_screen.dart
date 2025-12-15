@@ -3,6 +3,42 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'signin_screen.dart';
 
+class LocalNotificationService {
+  static final DatabaseReference _databaseRef = FirebaseDatabase.instance.ref();
+
+  static Future<void> notifyPasswordResetRequest(
+    String userName,
+    String userEmail,
+    String userId,
+    String requestId,
+  ) async {
+    try {
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final newRef = _databaseRef.child('admin_notifications').push();
+
+      await newRef.set({
+        'title': '🔐 Permintaan Reset Password',
+        'message': '$userName ($userEmail) mengajukan permintaan reset password',
+        'timestamp': timestamp,
+        'isRead': false,
+        'type': 'warning',
+        'source': 'password_reset',
+        'action': 'password_reset_request',
+        'userId': userId,
+        'userName': userName,
+        'userEmail': userEmail,
+        'requestId': requestId,
+        'category': 'password_reset',
+        'priority': 'high',
+      });
+
+      print('✅ Notifikasi: Permintaan reset password - $userName');
+    } catch (e) {
+      print('❌ Error notifikasi reset password: $e');
+    }
+  }
+}
+
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
 
@@ -104,14 +140,14 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
       // Simpan permintaan reset password
       final requestRef = _databaseRef.child('passwordResetRequests').push();
-      final requestId = requestRef.key;
+      final requestId = requestRef.key!;
       
       await requestRef.set({
         'userId': userId,
         'userName': userName,
         'email': email,
         'newPassword': newPassword,
-        'status': 'pending', // pending, approved, rejected
+        'status': 'pending', 
         'requestedAt': DateTime.now().millisecondsSinceEpoch,
         'processedAt': null,
         'processedBy': null,
@@ -124,6 +160,14 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         'passwordChangeStatus': 'pending',
         'passwordChangeRequestId': requestId,
       });
+
+      // ✅ KIRIM NOTIFIKASI KE ADMIN - MENGGUNAKAN SERVICE LOKAL
+      await LocalNotificationService.notifyPasswordResetRequest(
+        userName,
+        email,
+        userId,
+        requestId,
+      );
 
       // Simpan aktivitas
       await _databaseRef.child('activities').push().set({
