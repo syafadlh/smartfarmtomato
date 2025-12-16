@@ -1,4 +1,5 @@
 // ignore_for_file: undefined_class
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:intl/intl.dart';
@@ -14,6 +15,8 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   final DatabaseReference _databaseRef = FirebaseDatabase.instance.ref();
+  late StreamSubscription<DatabaseEvent> _historyStream;
+  late StreamSubscription<DatabaseEvent> _realtimeStream;
 
   List<LogEntry> _logs = [];
   LogEntry? _realtimeData;
@@ -42,66 +45,111 @@ class _HistoryScreenState extends State<HistoryScreen> {
   @override
   void initState() {
     super.initState();
-    _initializeRealtimeListener();
+    _initializeListeners();
   }
 
-  void _initializeRealtimeListener() {
+  @override
+  void dispose() {
+    _historyStream.cancel();
+    _realtimeStream.cancel();
+    super.dispose();
+  }
+
+  void _initializeListeners() {
     // Listen untuk current_data (realtime)
-    _databaseRef.child('current_data').onValue.listen((DatabaseEvent event) {
+    _realtimeStream = _databaseRef.child('current_data').onValue.listen((DatabaseEvent event) {
       _handleRealtimeData(event.snapshot.value);
     });
 
-    // Load history data dari history_data
-    _loadHistoryData();
+    // Listen untuk history_data (update otomatis)
+    _historyStream = _databaseRef.child('history_data')
+      .orderByKey()
+      .limitToLast(100)
+      .onValue.listen((DatabaseEvent event) {
+      _handleHistoryData(event.snapshot.value);
+    });
   }
 
   void _handleRealtimeData(dynamic data) {
     if (data != null && data is Map) {
       setState(() {
-        _realtimeData = _createLogEntry('realtime', data, DateTime.now().millisecondsSinceEpoch);
+        _realtimeData = _createLogEntry('current_data', data, DateTime.now().millisecondsSinceEpoch);
       });
     }
   }
 
-  void _loadHistoryData() {
+  void _handleHistoryData(dynamic data) {
+    try {
+      final List<LogEntry> logs = [];
+
+      if (data != null && data is Map) {
+        data.forEach((key, value) {
+          if (value is Map) {
+            final int timestamp = _parseTimestamp(value, key.toString());
+            // Filter hanya data yang valid (timestamp > 0 dan bukan fallback)
+            if (timestamp > 0 && _isValidTimestamp(timestamp)) {
+              logs.add(_createLogEntry(key.toString(), value, timestamp));
+            }
+          }
+        });
+      }
+
+      // Sort dari yang terbaru ke terlama
+      logs.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+      // Filter hanya data yang sesuai dengan data realtime atau valid
+      final filteredLogs = _filterInvalidData(logs);
+
+      setState(() {
+        _logs = filteredLogs;
+        _isLoading = false;
+        _hasError = false;
+      });
+    } catch (e) {
+      print('❌ Error loading history data: $e');
+      setState(() {
+        _isLoading = false;
+        _hasError = true;
+      });
+    }
+  }
+
+  void _refreshData() {
     setState(() {
       _isLoading = true;
-      _hasError = false;
     });
-
-    // Ambil data dari history_data
+    // Memuat ulang data dengan mengambil snapshot terbaru
     _databaseRef.child('history_data')
       .orderByKey()
       .limitToLast(100)
       .once()
       .then((DatabaseEvent event) {
-      try {
-        final data = event.snapshot.value;
-        final List<LogEntry> logs = [];
-
-        if (data != null && data is Map) {
-          data.forEach((key, value) {
-            if (value is Map) {
-              final int timestamp = _parseTimestamp(value, key.toString());
-              logs.add(_createLogEntry(key.toString(), value, timestamp));
-            }
-          });
-        }
-
-        logs.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-
-        setState(() {
-          _logs = logs;
-          _isLoading = false;
-        });
-      } catch (e) {
-        print('❌ Error loading history data: $e');
+        _handleHistoryData(event.snapshot.value);
+      })
+      .catchError((error) {
+        print('❌ Error refreshing data: $error');
         setState(() {
           _isLoading = false;
           _hasError = true;
         });
-      }
-    });
+      });
+  }
+
+  bool _isValidTimestamp(int timestamp) {
+    final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
+    final now = DateTime.now();
+    // Valid jika tahun > 2020 dan tidak lebih dari 24 jam ke depan
+    return date.year > 2020 && date.isBefore(now.add(const Duration(days: 1)));
+  }
+
+  List<LogEntry> _filterInvalidData(List<LogEntry> logs) {
+    // Filter data yang memiliki timestamp yang wajar
+    return logs.where((log) {
+      final date = DateTime.fromMillisecondsSinceEpoch(log.timestamp);
+      final now = DateTime.now();
+      // Hanya tampilkan data yang tidak lebih dari 24 jam ke depan
+      return date.isBefore(now.add(const Duration(days: 1)));
+    }).toList();
   }
 
   int _parseTimestamp(Map<dynamic, dynamic> data, String key) {
@@ -163,10 +211,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
       print('Error parsing timestamp from key: $e');
     }
 
-    // 4. Fallback: Gunakan waktu sekarang
-    final now = DateTime.now();
-    print('⚠️ Using current time for entry: $key');
-    return now.millisecondsSinceEpoch;
+    // 4. Jika tidak ditemukan, return 0 (akan difilter nanti)
+    return 0;
   }
 
   LogEntry _createLogEntry(String id, Map<dynamic, dynamic> data, int timestamp) {
@@ -198,10 +244,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (value is int) return value.toDouble();
     if (value is String) return double.tryParse(value);
     return null;
-  }
-
-  void _refreshData() {
-    _loadHistoryData();
   }
 
   // Fungsi untuk mendapatkan waktu berdasarkan jam
@@ -236,31 +278,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
   }
 
-  // Fungsi untuk mendapatkan warna teks berdasarkan mode gelap
-  Color _getTextColor(bool isDarkMode) {
-    return isDarkMode ? Colors.white : Colors.black;
-  }
-
-  // Fungsi untuk mendapatkan warna latar belakang berdasarkan mode gelap
-  Color _getBackgroundColor(bool isDarkMode) {
-    return isDarkMode ? _darkModeBg : Colors.grey.shade50;
-  }
-
-  // Fungsi untuk mendapatkan warna card berdasarkan mode gelap
-  Color _getCardColor(bool isDarkMode) {
-    return isDarkMode ? _darkModeSurface : Colors.white;
-  }
-
-  // Hitung statistik
-  int get _totalData => _logs.length;
-
   @override
   Widget build(BuildContext context) {
     final themeProvider = Provider.of<ThemeProvider>(context);
     final isDarkMode = themeProvider.isDarkMode;
 
     return Scaffold(
-      backgroundColor: _getBackgroundColor(isDarkMode),
+      backgroundColor: isDarkMode ? _darkModeBg : Colors.grey.shade50,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -329,21 +353,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       ),
                     ),
                     const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: isDarkMode ? _darkModePrimary.withOpacity(0.2) : Colors.white.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        'Total: $_totalData',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: isDarkMode ? _darkModePrimary : Colors.white,
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -411,14 +420,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
             ],
           ),
           const SizedBox(height: 8),
-          Text(
-            'Tahapan: ${log.plantStage} | Hari ke-${log.plantAge ?? 1}',
-            style: TextStyle(
-              color: isDarkMode ? Colors.grey.shade400 : Colors.white70,
-              fontSize: 12,
-            ),
-          ),
-          const SizedBox(height: 12),
           
           // Current Data Section
           Row(
@@ -464,7 +465,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
           ),
           const SizedBox(height: 12),
           
-          // Status pompa dan tanah (tanpa keterangan waktu)
+          // Status pompa dan tanah
           Row(
             children: [
               Container(
@@ -629,154 +630,136 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       color: isDarkMode ? Colors.grey.shade400 : Colors.white70,
                       fontSize: 10,
                     ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            
-            // Plant stage badge
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: isDarkMode ? Colors.grey.shade800 : Colors.white.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(6),
+                  ),
+                ],
               ),
-              child: Text(
-                '${log.plantStage}',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: isDarkMode ? _darkModePrimary : Colors.white,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            
-            // Sensor data badges
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildSensorBadge('🌡️', '${log.temperature?.toStringAsFixed(1) ?? '-'}°C', isDarkMode),
-                _buildSensorBadge('💧', '${log.humidity?.toStringAsFixed(1) ?? '-'}%', isDarkMode),
-                _buildSensorBadge('🌱', '${log.soilMoisture?.toStringAsFixed(1) ?? '-'}%', isDarkMode),
-                _buildSensorBadge('💡', '${log.brightness?.toStringAsFixed(1) ?? '-'}%', isDarkMode),
-              ],
-            ),
-          ],
-        ),
-      );
-    }
-
-    Widget _buildSensorBadge(String icon, String value, bool isDarkMode) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: isDarkMode ? Colors.grey.shade800 : Colors.white.withOpacity(0.2),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Row(
-          children: [
-            Text(icon, style: TextStyle(fontSize: 14)),
-            const SizedBox(width: 4),
-            Text(
-              value,
-              style: TextStyle(
-                color: isDarkMode ? Colors.white : Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    Widget _buildLoadingState(bool isDarkMode) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(color: isDarkMode ? _darkModePrimary : _darkGreen),
-            const SizedBox(height: 16),
-            Text('Memuat data...', 
-              style: TextStyle(color: isDarkMode ? _darkModePrimary : _darkGreen)),
-          ],
-        ),
-      );
-    }
-
-    Widget _buildErrorState(bool isDarkMode) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.error_outline, size: 48, 
-              color: isDarkMode ? Colors.red.shade400 : _red),
-            const SizedBox(height: 16),
-            Text('Gagal memuat data', 
-              style: TextStyle(color: isDarkMode ? Colors.red.shade400 : _red)),
-            const SizedBox(height: 8),
-            ElevatedButton(
-              onPressed: _refreshData,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: isDarkMode ? _darkModePrimary : _darkGreen,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Coba Lagi'),
-            ),
-          ],
-        ),
-      );
-    }
-
-    Widget _buildEmptyState(bool isDarkMode) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.inbox, size: 48, 
-              color: isDarkMode ? Colors.grey.shade600 : Colors.grey),
-            const SizedBox(height: 16),
-            Text('Belum ada data', 
-              style: TextStyle(color: isDarkMode ? Colors.grey.shade400 : Colors.grey)),
-          ],
-        ),
-      );
-    }
+            ],
+          ),
+          const SizedBox(height: 12),
+          
+          // Sensor data badges
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildSensorBadge('🌡️', '${log.temperature?.toStringAsFixed(1) ?? '-'}°C', isDarkMode),
+              _buildSensorBadge('💧', '${log.humidity?.toStringAsFixed(1) ?? '-'}%', isDarkMode),
+              _buildSensorBadge('🌱', '${log.soilMoisture?.toStringAsFixed(1) ?? '-'}%', isDarkMode),
+              _buildSensorBadge('💡', '${log.brightness?.toStringAsFixed(1) ?? '-'}%', isDarkMode),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
-  class LogEntry {
-    final String id;
-    final int timestamp;
-    final double? temperature;
-    final double? humidity;
-    final double? soilMoisture;
-    final double? brightness;
-    final String? soilCategory;
-    final String operationMode;
-    final String pumpStatus;
-    final String plantStage;
-    final int? plantAge;
-    final String? timeOfDay;
-    final String? datetime;
-    final String? formattedDate;
-
-    LogEntry({
-      required this.id,
-      required this.timestamp,
-      this.temperature,
-      this.humidity,
-      this.soilMoisture,
-      this.brightness,
-      this.soilCategory,
-      required this.operationMode,
-      required this.pumpStatus,
-      required this.plantStage,
-      this.plantAge,
-      this.timeOfDay,
-      this.datetime,
-      this.formattedDate, 
-    });
+  Widget _buildSensorBadge(String icon, String value, bool isDarkMode) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: isDarkMode ? Colors.grey.shade800 : Colors.white.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          Text(icon, style: TextStyle(fontSize: 14)),
+          const SizedBox(width: 4),
+          Text(
+            value,
+            style: TextStyle(
+              color: isDarkMode ? Colors.white : Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
   }
+
+  Widget _buildLoadingState(bool isDarkMode) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircularProgressIndicator(color: isDarkMode ? _darkModePrimary : _darkGreen),
+          const SizedBox(height: 16),
+          Text('Memuat data...', 
+            style: TextStyle(color: isDarkMode ? _darkModePrimary : _darkGreen)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState(bool isDarkMode) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.error_outline, size: 48, 
+            color: isDarkMode ? Colors.red.shade400 : _red),
+          const SizedBox(height: 16),
+          Text('Gagal memuat data', 
+            style: TextStyle(color: isDarkMode ? Colors.red.shade400 : _red)),
+          const SizedBox(height: 8),
+          ElevatedButton(
+            onPressed: _refreshData,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isDarkMode ? _darkModePrimary : _darkGreen,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Coba Lagi'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(bool isDarkMode) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.inbox, size: 48, 
+            color: isDarkMode ? Colors.grey.shade600 : Colors.grey),
+          const SizedBox(height: 16),
+          Text('Belum ada data', 
+            style: TextStyle(color: isDarkMode ? Colors.grey.shade400 : Colors.grey)),
+        ],
+      ),
+    );
+  }
+}
+
+class LogEntry {
+  final String id;
+  final int timestamp;
+  final double? temperature;
+  final double? humidity;
+  final double? soilMoisture;
+  final double? brightness;
+  final String? soilCategory;
+  final String operationMode;
+  final String pumpStatus;
+  final String plantStage;
+  final int? plantAge;
+  final String? timeOfDay;
+  final String? datetime;
+  final String? formattedDate;
+
+  LogEntry({
+    required this.id,
+    required this.timestamp,
+    this.temperature,
+    this.humidity,
+    this.soilMoisture,
+    this.brightness,
+    this.soilCategory,
+    required this.operationMode,
+    required this.pumpStatus,
+    required this.plantStage,
+    this.plantAge,
+    this.timeOfDay,
+    this.datetime,
+    this.formattedDate, 
+  });
+}
